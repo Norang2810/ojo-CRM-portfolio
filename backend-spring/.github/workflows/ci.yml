@@ -1,0 +1,67 @@
+name: CI - Build and Push Docker Image and CD
+
+# develop 혹은 main에 pr 올릴때, CI
+# main 브랜치에 푸시될 때만 CD 작동
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main", "develop" ]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+    - name: Checkout Source
+      uses: actions/checkout@v4
+
+    - name: Set up JDK 17
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+
+    # 빌드 (jar 생성)
+    - name: Build with Gradle
+      run: |
+        chmod +x gradlew
+        ./gradlew clean bootJar -x test
+
+    # Docker Hub 로그인
+    - name: Login to Docker Hub
+      uses: docker/login-action@v3
+      with:
+        username: ${{ secrets.DOCKER_USERNAME }}
+        password: ${{ secrets.DOCKER_PASSWORD }}
+
+    # 도커 이미지 빌드 및 푸시
+    - name: Build and Push Docker Image
+      run: |
+        # 기본 태그를 dev로 설정(develop ci 검사 및 main merge 전 확인용)
+        TAG="dev"
+        # push 이벤트이면서 main 브랜치일 때만 latest 사용
+        if [ "${{ github.ref }}" = "refs/heads/main" ] && [ "${{ github.event_name }}" = "push" ]; then
+          TAG="latest"
+        fi
+        echo "Target Tag: $TAG"
+        docker build -t ${{ secrets.DOCKER_USERNAME }}/ojo-backend:$TAG .
+        docker push ${{ secrets.DOCKER_USERNAME }}/ojo-backend:$TAG
+
+    # CD - main branch일때만
+    - name: Deploy to server(EC2)
+      if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+      uses: appleboy/ssh-action@master
+      id: deploy
+      with:
+        host: ${{ secrets.HOST }}
+        username: ubuntu
+        key: ${{ secrets.KEY }}
+        # envs: GITHUB_SHA
+        script: |
+          cd /home/ubuntu/project           # 실제 docker-compose.yml이 있는 위치로 수정 필요
+          docker-compose pull backend       # 최신 이미지 내려받기
+          docker-compose up -d backend      # 백엔드 이미지만 새로 받음, 무중단 교체
+          docker image prune -f             # 쓰지 않는 옛날 이미지 삭제
