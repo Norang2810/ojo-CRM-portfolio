@@ -1,0 +1,127 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: db
+    environment:
+      - MYSQL_DATABASE=ojo
+      - MYSQL_ROOT_PASSWORD=high5
+      - TZ=Asia/Seoul
+    ports:
+      - "3307:3306"
+    entrypoint:
+      - /bin/bash
+      - -c
+      - |
+        cat <<'EOF' > /docker-entrypoint-initdb.d/init.sql
+        CREATE DATABASE IF NOT EXISTS ojo;
+        CREATE DATABASE IF NOT EXISTS ojo_analysis;
+        EOF
+        exec /entrypoint.sh mysqld
+    healthcheck:
+      test: [ "CMD-SHELL", "mysql -uroot -phigh5 -e \"USE ojo; SELECT 1;\" || exit 1" ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:9.2.3
+    container_name: elasticsearch
+    environment:
+      - node.name=es01
+      - cluster.name=es-docker-cluster
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+      - xpack.security.enabled=false
+      - TZ=Asia/Seoul
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -fs http://localhost:9200/_cluster/health || exit 1" ]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+    command: >
+      /bin/bash -c "
+        bin/elasticsearch-plugin list | grep -q analysis-nori || bin/elasticsearch-plugin install --batch analysis-nori;
+        exec /usr/local/bin/docker-entrypoint.sh
+      "
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:9.2.3
+    container_name: kibana
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+      - TZ=Asia/Seoul
+    ports:
+      - "5601:5601"
+    depends_on:
+      - elasticsearch
+
+  analytics:
+    build:
+      context: ./backend-python
+      dockerfile: Dockerfile
+    container_name: python_server
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      - RDS_USERNAME=root
+      - RDS_PASSWORD=high5
+      - RDS_HOST=db
+      - RDS_PORT=3306
+      - OJO_DATABASE=ojo
+      - ANALYSIS_DATABASE=ojo_analysis
+
+  backend:
+    build:
+      context: ./backend-spring
+      dockerfile: Dockerfile
+    container_name: spring_server
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+      analytics:
+        condition: service_started
+      redis:
+        condition: service_healthy
+    environment:
+      - SPRING_DATASOURCE_URL=jdbc:mysql://db:3306/ojo?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Seoul&nullCatalogMeansCurrent=true
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=high5
+      - SPRING_ELASTICSEARCH_URIS=http://elasticsearch:9200
+      - ANALYTICS_URL=http://analytics:8000
+      - APP_JWT_SECRET=${APP_JWT_SECRET}
+      - APP_GOOGLE_CLIENT_ID=${GOOGLE_CLIENT_ID}
+      - APP_GOOGLE_CLIENT_SECRET=${GOOGLE_CLIENT_SECRET}
+      - APP_GOOGLE_REDIRECT_URI=${GOOGLE_REDIRECT_URI}
+      - SPRING_DATA_REDIS_HOST=redis
+      - SPRING_DATA_REDIS_PORT=6379
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    environment:
+      - TZ=Asia/Seoul
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+volumes:
+  es_data:
+  mysql_data:
