@@ -9,13 +9,16 @@ import org.backend.domain.analysis.repository.DashboardRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.cache.annotation.Cacheable;
 
+
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class DashboardService {
@@ -24,6 +27,7 @@ public class DashboardService {
 
     @Cacheable(value = "dashboardCache", key = "'summary'")   // 대시보드 최종 응답 생성의 중심 메서드 캐싱처리
     public DashboardSummaryResponseDto getDashboardSummary() {
+        log.info("대시보드 실제 조회 실행");
         LocalDate today = LocalDate.now();
         LocalDate startOfThisMonth = today.withDayOfMonth(1);
         
