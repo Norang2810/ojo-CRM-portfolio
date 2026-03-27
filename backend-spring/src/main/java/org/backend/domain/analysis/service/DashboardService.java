@@ -7,6 +7,7 @@ import org.backend.domain.analysis.dto.DashboardSegmentStatDto;
 import org.backend.domain.analysis.dto.DashboardSummaryResponseDto;
 import org.backend.domain.analysis.repository.DashboardRepository;
 import org.springframework.stereotype.Service;
+import org.springframework.cache.annotation.Cacheable;
 
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
@@ -21,6 +22,7 @@ public class DashboardService {
 
     private final DashboardRepository dashboardRepository;
 
+    @Cacheable(value = "dashboardCache", key = "'summary'")   // 대시보드 최종 응답 생성의 중심 메서드 캐싱처리
     public DashboardSummaryResponseDto getDashboardSummary() {
         LocalDate today = LocalDate.now();
         LocalDate startOfThisMonth = today.withDayOfMonth(1);
