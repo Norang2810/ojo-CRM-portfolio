@@ -2,7 +2,12 @@ package org.backend.domain.batch.scheduler;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.batch.core.*;
+import org.backend.domain.analysis.service.DashboardAggregationService;
+import org.springframework.batch.core.BatchStatus;
+import org.springframework.batch.core.Job;
+import org.springframework.batch.core.JobExecution;
+import org.springframework.batch.core.JobParameters;
+import org.springframework.batch.core.JobParametersBuilder;
 import org.springframework.batch.core.launch.JobLauncher;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
@@ -22,56 +27,82 @@ public class MemberFeatureScheduler {
     private final Job postAnalysisJob;
 
     private final RestTemplate restTemplate;
-    private final String ANALYTICS_URL = "http://python_server:8000/api/analysis/make";
+    private final DashboardAggregationService dashboardAggregationService;
 
-    // 매일 새벽 2시에 실행 (Cron 표현식: 초 분 시 일 월 요일)
+    private static final String ANALYTICS_URL = "http://python_server:8000/api/analysis/make";
+
+    // 매일 새벽 2시에 실행
     @Scheduled(cron = "0 0 2 * * *")
-//    @Scheduled(cron = "0 * * * * *")
+    // @Scheduled(cron = "0 * * * * *")
     public void runMemberFeatureJob() {
         try {
-            // 어제 날짜를 기준일로 설정 (데이터 정합성 측면에서 유리)
             String targetDateStr = LocalDate.now().minusDays(1).toString();
             String targetMonth = LocalDate.now().format(DateTimeFormatter.ofPattern("yyyy-MM"));
+
             log.info("########## [SCHEDULE] BATCH START FOR DATE: {} ##########", targetDateStr);
 
-            JobParameters params = new JobParametersBuilder()
+            // Step 1. Feature Batch
+            JobParameters featureParams = new JobParametersBuilder()
                     .addString("featureBaseDate", targetDateStr)
                     .addLong("run.id", System.currentTimeMillis())
                     .toJobParameters();
 
-            JobExecution execution1 = jobLauncher.run(memberFeatureJob, params);
+            JobExecution execution1 = jobLauncher.run(memberFeatureJob, featureParams);
             if (execution1.getStatus() != BatchStatus.COMPLETED) {
                 log.error("########## [SCHEDULE] STEP 1 FAILED! STOPPING PIPELINE ##########");
                 return;
             }
 
-            log.info("########## [SCHEDULE] BATCH COMPLETED SUCCESSFULLY ##########");
+            log.info("########## [SCHEDULE] STEP 1 COMPLETED ##########");
 
+            // Step 2. RFM Pre-Analysis
             log.info(">>> Step 2: RFM Pre-Analysis Job Start");
 
-            JobExecution execution2 = jobLauncher.run(preAnalysisJob, new JobParametersBuilder()
-                    .addString("baseMonth", targetMonth)
-                    .addLong("run.id", System.currentTimeMillis()).toJobParameters());
+            JobExecution execution2 = jobLauncher.run(
+                    preAnalysisJob,
+                    new JobParametersBuilder()
+                            .addString("baseMonth", targetMonth)
+                            .addLong("run.id", System.currentTimeMillis())
+                            .toJobParameters()
+            );
+
             if (execution2.getStatus() != BatchStatus.COMPLETED) {
                 log.error("########## [SCHEDULE] STEP 2 FAILED! STOPPING PIPELINE ##########");
                 return;
             }
 
-            // 3. 파이썬 다차원 분석 호출 (LTV, Churn, Recommend)
+            log.info("########## [SCHEDULE] STEP 2 COMPLETED ##########");
+
+            // Step 3. Python Analysis
             log.info(">>> Step 3: Python Analysis Pipeline Start");
             restTemplate.getForEntity(ANALYTICS_URL, String.class);
+            log.info("########## [SCHEDULE] STEP 3 COMPLETED ##########");
 
-            // 4. KPI 및 스냅샷 생성
+            // Step 4. KPI / Snapshot Post-Analysis
             log.info(">>> Step 4: KPI Post-Analysis Job Start");
-            JobExecution execution4 = jobLauncher.run(postAnalysisJob, new JobParametersBuilder()
-                    .addString("baseMonth", targetMonth)
-                    .addLong("run.id", System.currentTimeMillis()).toJobParameters());
+
+            JobExecution execution4 = jobLauncher.run(
+                    postAnalysisJob,
+                    new JobParametersBuilder()
+                            .addString("baseMonth", targetMonth)
+                            .addLong("run.id", System.currentTimeMillis())
+                            .toJobParameters()
+            );
+
             if (execution4.getStatus() != BatchStatus.COMPLETED) {
                 log.error("########## [SCHEDULE] STEP 4 FAILED! STOPPING PIPELINE ##########");
                 return;
             }
 
+            log.info("########## [SCHEDULE] STEP 4 COMPLETED ##########");
+
+            // Step 5. Dashboard Aggregation
+            log.info(">>> Step 5: Dashboard Aggregation Start");
+            dashboardAggregationService.refreshDashboardStats();
+            log.info("########## [SCHEDULE] STEP 5 COMPLETED ##########");
+
             log.info("########## ALL BATCH PROCESS COMPLETED ##########");
+
         } catch (Exception e) {
             log.error("########## [SCHEDULE] BATCH FAILED! ##########", e);
         }
