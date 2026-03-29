@@ -7,6 +7,7 @@ import com.querydsl.jpa.impl.JPAQueryFactory;
 import lombok.RequiredArgsConstructor;
 import org.backend.domain.advice.dto.HourlyConsultationDto;
 import org.backend.domain.advice.entity.Advice;
+import org.backend.domain.advice.entity.QAdvice;
 
 import java.util.List;
 
