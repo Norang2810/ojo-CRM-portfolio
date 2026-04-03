@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.backend.common.CommonResponse;
 import org.backend.common.exception.CustomException;
 import org.backend.common.exception.ErrorCode;
+import org.backend.domain.auth.security.AdminPrincipal;
 import org.backend.domain.channel.dto.*;
 import org.backend.domain.channel.service.ChannelService;
 import org.springframework.security.core.Authentication;
@@ -24,7 +25,14 @@ public class ChannelController {
         if (authentication == null || !authentication.isAuthenticated()) {
             throw new CustomException(ErrorCode.UNAUTHORIZED);
         }
-        return Long.parseLong((String) authentication.getPrincipal());
+        Object principal = authentication.getPrincipal();
+        if (principal instanceof AdminPrincipal adminPrincipal) {
+            return adminPrincipal.getAdminId();
+        }
+        if (principal instanceof String principalStr) {
+            return Long.parseLong(principalStr);
+        }
+        throw new CustomException(ErrorCode.UNAUTHORIZED);
     }
 
     // ── 채널 CRUD ──────────────────────────────────────────────
