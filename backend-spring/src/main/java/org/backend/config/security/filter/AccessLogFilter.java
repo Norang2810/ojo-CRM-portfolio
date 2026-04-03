@@ -77,6 +77,11 @@ public class AccessLogFilter extends OncePerRequestFilter {
     @Override
     protected boolean shouldNotFilter(HttpServletRequest request) {
         // 필요하면 제외 패턴 추가 가능 (ex: health, swagger 등)
-        return false;
+        String path = request.getRequestURI();
+        return path.startsWith("/swagger-ui/")
+                || path.startsWith("/v3/api-docs/")
+                || path.startsWith("/swagger-resources/")
+                || path.startsWith("/webjars/")
+                || "/error".equals(path);
     }
 }

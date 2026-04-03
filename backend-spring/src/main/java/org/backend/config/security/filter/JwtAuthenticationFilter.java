@@ -9,15 +9,14 @@ import org.backend.config.security.JwtProvider;
 import org.backend.domain.admin.entity.Admin;
 import org.backend.domain.admin.entity.AdminStatus;
 import org.backend.domain.admin.repository.AdminRepository;
+import org.backend.domain.auth.security.AdminPrincipal;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
-import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.List;
 
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
@@ -42,6 +41,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             Claims claims = jwtProvider.getClaims(token);
 
             String adminIdStr = claims.getSubject();
+            String email = (String) claims.get("email");
             String role = (String) claims.get("role");
 
             // ✅ DB status 체크: 비활성이면 인증 세팅하지 않음 (즉시 차단)
@@ -50,20 +50,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                 Admin admin = adminRepository.findById(adminId).orElse(null);
                 if (admin != null && admin.getStatus() == AdminStatus.ACTIVE) {
-                    List<SimpleGrantedAuthority> authorities = toAuthorities(role);
-                    Authentication auth = new UsernamePasswordAuthenticationToken(adminIdStr, null, authorities);
+                    AdminPrincipal principal = new AdminPrincipal(adminId, email, role);
+                    Authentication auth = new UsernamePasswordAuthenticationToken(
+                            principal,
+                            null,
+                            principal.getAuthorities()
+                    );
                     SecurityContextHolder.getContext().setAuthentication(auth);
                 }
             }
         }
 
         filterChain.doFilter(request, response);
-    }
-
-    private List<SimpleGrantedAuthority> toAuthorities(String role) {
-        if (!StringUtils.hasText(role)) return List.of();
-        String authority = role.startsWith("ROLE_") ? role : "ROLE_" + role;
-        return List.of(new SimpleGrantedAuthority(authority));
     }
 
     private String resolveToken(HttpServletRequest request) {

@@ -2,6 +2,7 @@ package org.backend.domain.member.controller;
 
 import lombok.RequiredArgsConstructor;
 import org.backend.common.CommonResponse;
+import org.backend.domain.auth.security.AdminPrincipal;
 import org.backend.domain.member.dto.MemberMemoResponse;
 import org.backend.domain.member.dto.MemoRequest;
 import org.backend.domain.member.service.MemberMemoService;
@@ -22,7 +23,14 @@ public class MemberMemoController {
         if (authentication == null || !authentication.isAuthenticated()) {
             throw new IllegalStateException("인증 정보가 없습니다. 로그인이 필요합니다.");
         }
-        return Long.parseLong((String) authentication.getPrincipal());
+        Object principal = authentication.getPrincipal();
+        if (principal instanceof AdminPrincipal adminPrincipal) {
+            return adminPrincipal.getAdminId();
+        }
+        if (principal instanceof String principalStr) {
+            return Long.parseLong(principalStr);
+        }
+        throw new IllegalStateException("Authenticated principal is invalid.");
     }
 
     // 상담사별 고객 메모 저장/수정
