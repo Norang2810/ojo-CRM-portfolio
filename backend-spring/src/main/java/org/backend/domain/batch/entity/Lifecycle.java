@@ -6,9 +6,15 @@ import org.hibernate.type.YesNoConverter; // 임포트 추가
 import java.time.LocalDate;
 
 @Entity
-@Table(name = "feature_lifecycle", uniqueConstraints = {
-        @UniqueConstraint(name = "uk_lifecycle_member_date", columnNames = { "member_id", "feature_base_date" })
-})
+@Table(
+        name = "feature_lifecycle",
+        uniqueConstraints = {
+                @UniqueConstraint(name = "uk_lifecycle_member_date", columnNames = { "member_id", "feature_base_date" })
+        },
+        indexes = {
+                @Index(name = "idx_lifecycle_date_dormant_member", columnList = "feature_base_date, is_dormant_flag, member_id")
+        }
+)
 @Getter
 @Setter
 @Builder

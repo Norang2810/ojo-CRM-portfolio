@@ -1,6 +1,7 @@
 package org.backend.config.cache;
 
 import java.time.Duration;
+import java.util.Map;
 
 import org.springframework.cache.CacheManager;
 import org.springframework.context.annotation.Bean;
@@ -31,8 +32,13 @@ public class RedisCacheConfig {
                         )
                 );
 
+        RedisCacheConfiguration dashboardConfiguration = configuration.entryTtl(Duration.ofMinutes(5));
+
         return RedisCacheManager.builder(connectionFactory)
                 .cacheDefaults(configuration)
+                .withInitialCacheConfigurations(Map.of(
+                        "dashboardCache", dashboardConfiguration
+                ))
                 .build();
     }
 }

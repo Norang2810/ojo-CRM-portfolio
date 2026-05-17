@@ -2,14 +2,19 @@ package org.backend.domain.analysis.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.backend.domain.analysis.dto.projection.DashboardDailyCountProjection;
+import org.backend.domain.analysis.dto.projection.DashboardSegmentCountProjection;
 import org.backend.domain.analysis.entity.DashboardDailyStats;
 import org.backend.domain.analysis.entity.DashboardSummaryStats;
 import org.backend.domain.analysis.repository.DashboardDailyStatsRepository;
 import org.backend.domain.analysis.repository.DashboardRepository;
 import org.backend.domain.analysis.repository.DashboardSummaryStatsRepository;
-import org.springframework.cache.annotation.CacheEvict;
+import org.springframework.cache.Cache;
+import org.springframework.cache.CacheManager;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDate;
 import java.util.HashMap;
@@ -24,9 +29,10 @@ public class DashboardAggregationService {
     private final DashboardRepository dashboardRepository;
     private final DashboardSummaryStatsRepository dashboardSummaryStatsRepository;
     private final DashboardDailyStatsRepository dashboardDailyStatsRepository;
+    private final DashboardService dashboardService;
+    private final CacheManager cacheManager;
 
     @Transactional
-    @CacheEvict(value = "dashboardCache", allEntries = true)
     public void refreshDashboardStats() {
         LocalDate today = LocalDate.now();
         LocalDate startOfThisMonth = today.withDayOfMonth(1);
@@ -39,7 +45,7 @@ public class DashboardAggregationService {
         String monthStartStr = startOfThisMonth.toString();
         String thisWeekStartStr = startOfThisWeek.toString();
         String lastWeekStartStr = startOfLastWeek.toString();
-        String lastWeekEndStr = endOfLastWeek.toString();
+        String lastWeekEndStr = endOfLastWeek.plusDays(1).toString();
 
         long currentTotal = dashboardRepository.countCurrentCustomers(todayExclusive);
         long lastWeekTotal = dashboardRepository.countCurrentCustomers(lastWeekEndStr);
@@ -56,20 +62,16 @@ public class DashboardAggregationService {
         long riskThisWeek = dashboardRepository.countAtRiskCustomers(thisWeekStartStr, todayExclusive);
         long riskLastWeek = dashboardRepository.countAtRiskCustomers(lastWeekStartStr, lastWeekEndStr);
 
-        List<Map<String, Object>> segmentsDb = dashboardRepository.getSegmentCounts();
+        List<DashboardSegmentCountProjection> segmentsDb = dashboardRepository.getSegmentCounts();
         long vip = 0L;
         long potentialVip = 0L;
         long general = 0L;
         long atRisk = 0L;
         long churned = 0L;
 
-        for (Map<String, Object> row : segmentsDb) {
-            String type = (String) row.get("type");
-            long count = ((Number) row.get("cnt")).longValue();
-
-            if (type == null) {
-                type = "COMMON";
-            }
+        for (DashboardSegmentCountProjection row : segmentsDb) {
+            String type = row.getType() == null ? "COMMON" : row.getType();
+            long count = row.getCountValue();
 
             switch (type) {
                 case "VIP" -> vip += count;
@@ -121,13 +123,9 @@ public class DashboardAggregationService {
         LocalDate sevenDaysAgo = today.minusDays(6);
         String sevenDaysAgoStr = sevenDaysAgo.toString();
 
-        List<Map<String, Object>> newDailies = dashboardRepository.getDailyNewCustomers(sevenDaysAgoStr, todayExclusive);
-        List<Map<String, Object>> churnedDailies = dashboardRepository.getDailyChurnedCustomers(sevenDaysAgoStr, todayExclusive);
-        List<Map<String, Object>> activeDailies = dashboardRepository.getDailyActiveCustomers(sevenDaysAgoStr, todayExclusive);
-
-        Map<String, Long> mappedNew = parseDaily(newDailies, "statDate", "newCount");
-        Map<String, Long> mappedChurn = parseDaily(churnedDailies, "statDate", "churnedCount");
-        Map<String, Long> mappedActive = parseDaily(activeDailies, "statDate", "activeCount");
+        Map<String, Long> mappedNew = parseDaily(dashboardRepository.getDailyNewCustomers(sevenDaysAgoStr, todayExclusive));
+        Map<String, Long> mappedChurn = parseDaily(dashboardRepository.getDailyChurnedCustomers(sevenDaysAgoStr, todayExclusive));
+        Map<String, Long> mappedActive = parseDaily(dashboardRepository.getDailyActiveCustomers(sevenDaysAgoStr, todayExclusive));
 
         for (int i = 0; i <= 6; i++) {
             LocalDate statDate = sevenDaysAgo.plusDays(i);
@@ -150,7 +148,8 @@ public class DashboardAggregationService {
             dashboardDailyStatsRepository.save(dailyStats);
         }
 
-        log.info("대시보드 선계산 통계 적재 완료 - statDate={}", today);
+        scheduleDashboardCacheRefreshAfterCommit();
+        log.info("Dashboard precomputed stats refresh completed - statDate={}", today);
     }
 
     private double calculateChange(long current, long previous) {
@@ -160,13 +159,25 @@ public class DashboardAggregationService {
         return Math.round((((double) current - previous) / previous) * 1000.0) / 10.0;
     }
 
-    private Map<String, Long> parseDaily(List<Map<String, Object>> list, String dateKey, String countKey) {
+    private Map<String, Long> parseDaily(List<DashboardDailyCountProjection> rows) {
         Map<String, Long> map = new HashMap<>();
-        for (Map<String, Object> row : list) {
-            String date = row.get(dateKey).toString();
-            Long count = ((Number) row.get(countKey)).longValue();
-            map.put(date, count);
+        for (DashboardDailyCountProjection row : rows) {
+            map.put(row.getStatDate().toString(), row.getCountValue());
         }
         return map;
+    }
+
+    private void scheduleDashboardCacheRefreshAfterCommit() {
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                Cache cache = cacheManager.getCache("dashboardCache");
+                if (cache != null) {
+                    cache.clear();
+                }
+                dashboardService.getDashboardSummary();
+                log.info("Dashboard cache warmed after successful aggregation commit");
+            }
+        });
     }
 }
