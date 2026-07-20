@@ -10,7 +10,8 @@ import java.time.LocalDateTime;
 @Table(
         name = "member",
         indexes = {
-                @Index(name = "idx_member_created_status", columnList = "created_at, status")
+                @Index(name = "idx_member_created_status", columnList = "created_at, status"),
+                @Index(name = "idx_member_updated_member", columnList = "updated_at, member_id")
         }
 )
 @Getter
@@ -47,6 +48,10 @@ public class Member {
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    @Column(name = "updated_at", insertable = false, updatable = false,
+            columnDefinition = "DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)")
+    private LocalDateTime updatedAt;
 
     @Column(nullable = false, length = 20)
     private String status;

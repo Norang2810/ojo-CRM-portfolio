@@ -2,8 +2,10 @@ package org.backend.domain.batch.entity;
 
 import jakarta.persistence.*;
 import lombok.*;
+import org.hibernate.annotations.UpdateTimestamp;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 
 @Entity
 @Table(name = "feature_consultation", uniqueConstraints = {
@@ -29,6 +31,16 @@ public class ConsultationBasics {
     // 데이터 추출 기준일
     @Column(name = "feature_base_date")
     private LocalDate featureBaseDate;
+
+    @Column(name = "feature_base_at")
+    private LocalDateTime featureBaseAt;
+
+    @Column(name = "batch_id", length = 36)
+    private String batchId;
+
+    @UpdateTimestamp
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
 
     // 전체 누적 상담 건수
     @Column(name = "total_consult_count", nullable = false)

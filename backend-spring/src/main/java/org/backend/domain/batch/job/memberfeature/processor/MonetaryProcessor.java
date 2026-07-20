@@ -12,6 +12,8 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -19,13 +21,24 @@ import java.util.stream.Collectors;
 @StepScope
 public class MonetaryProcessor implements ItemProcessor<List<Member>, List<Monetary>> {
 
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Seoul");
+
     @PersistenceContext
     private EntityManager em;
 
     private final LocalDate featureBaseDate;
+    private final LocalDateTime featureBaseAt;
+    private final String batchId;
 
-    public MonetaryProcessor(@Value("#{jobParameters['featureBaseDate']}") String baseDateStr) {
+    public MonetaryProcessor(
+            @Value("#{jobParameters['featureBaseDate']}") String baseDateStr,
+            @Value("#{jobParameters['featureBaseAt']}") String featureBaseAtStr,
+            @Value("#{jobParameters['batchId']}") String batchId) {
         this.featureBaseDate = (baseDateStr != null) ? LocalDate.parse(baseDateStr) : LocalDate.now();
+        this.featureBaseAt = featureBaseAtStr != null
+                ? LocalDateTime.parse(featureBaseAtStr)
+                : this.featureBaseDate.plusDays(1).atStartOfDay();
+        this.batchId = batchId;
     }
 
     private <V> Map<Long, V> toSafeMap(java.util.stream.Stream<Object[]> stream,
@@ -43,14 +56,14 @@ public class MonetaryProcessor implements ItemProcessor<List<Member>, List<Monet
     @Override
     public List<Monetary> process(List<Member> members) {
         LocalDate targetDate = this.featureBaseDate;
-        LocalDateTime targetLimit = targetDate.atTime(23, 59, 59);
-        LocalDateTime sixMonthsAgo = targetDate.minusMonths(6).atStartOfDay();
+        LocalDateTime targetLimit = featureBaseAt;
+        LocalDateTime sixMonthsAgo = featureBaseAt.minusMonths(6);
         List<Long> memberIds = members.stream().map(Member::getId).collect(Collectors.toList());
 
         // 1. 전체 매출 통계 (billedAmount 합계, 평균)
         Map<Long, Object[]> totalStatsMap = toSafeMap(
                 em.createQuery("SELECT i.member.id, SUM(i.billedAmount), AVG(i.billedAmount) " +
-                                "FROM Invoice i WHERE i.member.id IN :memberIds AND i.createdAt <= :targetLimit " +
+                                "FROM Invoice i WHERE i.member.id IN :memberIds AND i.createdAt < :targetLimit " +
                                 "GROUP BY i.member.id", Object[].class)
                         .setParameter("memberIds", memberIds).setParameter("targetLimit", targetLimit).getResultStream(),
                 row -> row);
@@ -67,15 +80,15 @@ public class MonetaryProcessor implements ItemProcessor<List<Member>, List<Monet
         Map<Long, Object[]> lastPaymentMap = toSafeMap(
                 em.createQuery("SELECT i.member.id, p.paidAmount, p.paidAt " +
                                 "FROM Payment p JOIN p.invoice i " +
-                                "WHERE i.member.id IN :memberIds AND p.paidAt <= :targetLimit " +
-                                "AND p.paidAt = (SELECT MAX(p2.paidAt) FROM Payment p2 JOIN p2.invoice i2 WHERE i2.member.id = i.member.id AND p2.paidAt <= :targetLimit) ", Object[].class)
+                                "WHERE i.member.id IN :memberIds AND p.paidAt < :targetLimit " +
+                                "AND p.paidAt = (SELECT MAX(p2.paidAt) FROM Payment p2 JOIN p2.invoice i2 WHERE i2.member.id = i.member.id AND p2.paidAt < :targetLimit) ", Object[].class)
                         .setParameter("memberIds", memberIds).setParameter("targetLimit", targetLimit).getResultStream(),
                 row -> row);
 
         // 4. 연체 횟수
         Map<Long, Integer> delayCountMap = toSafeMap(
                 em.createQuery("SELECT i.member.id, COUNT(i.id) FROM Invoice i " +
-                                "WHERE i.member.id IN :memberIds AND i.overdueAmount > 0 AND i.createdAt <= :targetLimit " +
+                                "WHERE i.member.id IN :memberIds AND i.overdueAmount > 0 AND i.createdAt < :targetLimit " +
                                 "GROUP BY i.member.id", Object[].class)
                         .setParameter("memberIds", memberIds).setParameter("targetLimit", targetLimit).getResultStream(),
                 row -> ((Number) row[1]).intValue());
@@ -87,7 +100,7 @@ public class MonetaryProcessor implements ItemProcessor<List<Member>, List<Monet
                                 "WHERE i.member.id IN :memberIds " +
                                 // 핵심 수정: SUBSCRIPTION(정기결제)은 제외하고 ONE_TIME(일회성 구매)만 집계
                                 "AND UPPER(id.productType) = 'ONE_TIME' " +
-                                "AND p.paidAt <= :targetLimit " +
+                                "AND p.paidAt < :targetLimit " +
                                 "GROUP BY i.member.id", Object[].class)
                         .setParameter("memberIds", memberIds).setParameter("targetLimit", targetLimit).getResultStream(),
                 row -> row);
@@ -111,8 +124,13 @@ public class MonetaryProcessor implements ItemProcessor<List<Member>, List<Monet
     }
 
     private Map<Long, Long> queryMonthlyRevenue(List<Long> ids, String bm) {
-        return toSafeMap(em.createQuery("SELECT i.member.id, SUM(i.billedAmount) FROM Invoice i WHERE i.member.id IN :ids AND i.baseMonth = :bm GROUP BY i.member.id", Object[].class)
-                .setParameter("ids", ids).setParameter("bm", bm).getResultStream(), row -> row[1] != null ? ((Number) row[1]).longValue() : 0L);
+        return toSafeMap(em.createQuery("SELECT i.member.id, SUM(i.billedAmount) FROM Invoice i " +
+                        "WHERE i.member.id IN :ids AND i.baseMonth = :bm AND i.createdAt < :featureBaseAt " +
+                        "GROUP BY i.member.id", Object[].class)
+                .setParameter("ids", ids)
+                .setParameter("bm", bm)
+                .setParameter("featureBaseAt", featureBaseAt)
+                .getResultStream(), row -> row[1] != null ? ((Number) row[1]).longValue() : 0L);
     }
 
     private Monetary buildMonetary(Member member, LocalDate targetDate, Map<Long, Object[]> totalStatsMap, Map<Long, Double> sixMonthAvgMap, Map<Long, Object[]> lastPaymentMap, Map<Long, Integer> delayCountMap, Map<Long, Object[]> addonStatsMap, Map<Long, Long> payCount6mMap, Map<Long, Long> currMonthMap, Map<Long, Long> prevMonthMap) {
@@ -126,7 +144,10 @@ public class MonetaryProcessor implements ItemProcessor<List<Member>, List<Monet
         // 2. 마지막 결제
         Object[] lRow = lastPaymentMap.get(mid);
         long lastAmt = (lRow != null && lRow[1] != null) ? ((Number) lRow[1]).longValue() : 0L;
-        LocalDate lastDt = (lRow != null && lRow[2] != null) ? ((LocalDateTime) lRow[2]).toLocalDate() : null;
+        LocalDate lastDt = (lRow != null && lRow[2] != null)
+                ? ((LocalDateTime) lRow[2]).atOffset(ZoneOffset.UTC)
+                        .atZoneSameInstant(BUSINESS_ZONE).toLocalDate()
+                : null;
 
         // 3. 구매 주기 (0 또는 30만 나오는 문제 해결부)
         int cycle = 0;
@@ -134,7 +155,11 @@ public class MonetaryProcessor implements ItemProcessor<List<Member>, List<Monet
         if (aRow != null) {
             long count = (aRow[1] != null) ? ((Number) aRow[1]).longValue() : 0L;
             if (count >= 2 && aRow[2] != null && aRow[3] != null) {
-                long days = ChronoUnit.DAYS.between(((LocalDateTime) aRow[2]).toLocalDate(), ((LocalDateTime) aRow[3]).toLocalDate());
+                long days = ChronoUnit.DAYS.between(
+                        ((LocalDateTime) aRow[2]).atOffset(ZoneOffset.UTC)
+                                .atZoneSameInstant(BUSINESS_ZONE).toLocalDate(),
+                        ((LocalDateTime) aRow[3]).atOffset(ZoneOffset.UTC)
+                                .atZoneSameInstant(BUSINESS_ZONE).toLocalDate());
                 cycle = (int) (days / (count - 1));
             }
         }
@@ -142,6 +167,7 @@ public class MonetaryProcessor implements ItemProcessor<List<Member>, List<Monet
         long prevMonthRev = prevMonthMap.getOrDefault(mid, 0L);
 
         return Monetary.builder().memberId(mid).featureBaseDate(targetDate)
+                .featureBaseAt(featureBaseAt).batchId(batchId)
                 .totalRevenue(totalRev).lastPaymentAmount(lastAmt).lastPaymentDate(lastDt)
                 .avgMonthlyBill(sixMonthAvgMap.getOrDefault(mid, 0.0).floatValue())
                 .paymentCount6m(payCount6mMap.getOrDefault(mid, 0L).intValue())

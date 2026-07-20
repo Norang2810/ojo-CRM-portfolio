@@ -36,6 +36,11 @@ public class SnapshotReaderConfig {
                         " AND s.baseMonth = :last " +
                         " JOIN Analysis a ON i.member.id = a.member.id " +
                         " AND FUNCTION('DATE_FORMAT', a.createdAt, '%Y%m') = :base " +
+                        " AND a.createdAt = (" +
+                        "   SELECT MAX(a2.createdAt) FROM Analysis a2 " +
+                        "   WHERE a2.member.id = i.member.id " +
+                        "   AND FUNCTION('DATE_FORMAT', a2.createdAt, '%Y%m') = :base" +
+                        " ) " +
                         " WHERE i.baseMonth = :base")
                 .parameterValues(Map.of(
                     "base", base,

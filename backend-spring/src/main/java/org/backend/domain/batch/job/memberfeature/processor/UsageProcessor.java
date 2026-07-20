@@ -24,17 +24,25 @@ public class UsageProcessor implements ItemProcessor<List<Member>, List<FeatureU
     private EntityManager em;
 
     private final LocalDate featureBaseDate;
+    private final LocalDateTime featureBaseAt;
+    private final String batchId;
 
     public UsageProcessor(
-            @Value("#{jobParameters['featureBaseDate']}") String baseDateStr) {
+            @Value("#{jobParameters['featureBaseDate']}") String baseDateStr,
+            @Value("#{jobParameters['featureBaseAt']}") String featureBaseAtStr,
+            @Value("#{jobParameters['batchId']}") String batchId) {
         this.featureBaseDate = (baseDateStr != null) ? LocalDate.parse(baseDateStr) : LocalDate.now();
+        this.featureBaseAt = featureBaseAtStr != null
+                ? LocalDateTime.parse(featureBaseAtStr)
+                : this.featureBaseDate.plusDays(1).atStartOfDay();
+        this.batchId = batchId;
     }
 
     @Override
     public List<FeatureUsage> process(List<Member> members) {
         LocalDate targetDate = this.featureBaseDate;
         LocalDate thirtyDaysAgo = targetDate.minusDays(30);
-        LocalDateTime targetLimit = targetDate.atTime(23, 59, 59);
+        LocalDateTime targetLimit = featureBaseAt;
 
         List<Long> memberIds = members.stream()
                 .map(Member::getId)
@@ -43,11 +51,13 @@ public class UsageProcessor implements ItemProcessor<List<Member>, List<FeatureU
         // 전체 사용량 통계
         Map<Long, Object[]> usageStatsMap = em.createQuery(
                         "SELECT d.member.id, SUM(d.usageAmount), AVG(d.usageAmount), MAX(d.usageAmount), MAX(d.usageDate) " +
-                                "FROM DataUsage d WHERE d.member.id IN :memberIds AND d.usageDate <= :targetDate " +
+                        "FROM DataUsage d WHERE d.member.id IN :memberIds AND d.usageDate <= :targetDate " +
+                                "AND d.createdAt < :targetLimit " +
                                 "GROUP BY d.member.id",
                         Object[].class)
                 .setParameter("memberIds", memberIds)
                 .setParameter("targetDate", targetDate)
+                .setParameter("targetLimit", targetLimit)
                 .getResultStream()
                 .collect(Collectors.toMap(
                         row -> (Long) row[0],
@@ -58,11 +68,13 @@ public class UsageProcessor implements ItemProcessor<List<Member>, List<FeatureU
         Map<Long, Integer> activeDaysMap = em.createQuery(
                         "SELECT d.member.id, COUNT(DISTINCT d.usageDate) FROM DataUsage d " +
                                 "WHERE d.member.id IN :memberIds AND d.usageDate BETWEEN :startDate AND :endDate " +
+                                "AND d.createdAt < :targetLimit " +
                                 "GROUP BY d.member.id",
                         Object[].class)
                 .setParameter("memberIds", memberIds)
                 .setParameter("startDate", thirtyDaysAgo)
                 .setParameter("endDate", targetDate)
+                .setParameter("targetLimit", targetLimit)
                 .getResultStream()
                 .collect(Collectors.toMap(
                         row -> (Long) row[0],
@@ -73,7 +85,7 @@ public class UsageProcessor implements ItemProcessor<List<Member>, List<FeatureU
         Map<Long, Integer> premiumCountMap = em.createQuery(
                         "SELECT i.member.id, COUNT(id.id) FROM InvoiceDetail id JOIN id.invoice i " +
                                 "WHERE i.member.id IN :memberIds AND id.productType NOT IN ('BASE') " +
-                                "AND i.createdAt <= :targetLimit " +
+                                "AND i.createdAt < :targetLimit " +
                                 "GROUP BY i.member.id",
                         Object[].class)
                 .setParameter("memberIds", memberIds)
@@ -88,10 +100,12 @@ public class UsageProcessor implements ItemProcessor<List<Member>, List<FeatureU
         Map<Long, Integer> peakHourMap = em.createQuery(
                         "SELECT d.member.id, d.usageTime, COUNT(d.id) as cnt FROM DataUsage d " +
                                 "WHERE d.member.id IN :memberIds AND d.usageDate <= :targetDate " +
+                                "AND d.createdAt < :targetLimit " +
                                 "GROUP BY d.member.id, d.usageTime",
                         Object[].class)
                 .setParameter("memberIds", memberIds)
                 .setParameter("targetDate", targetDate)
+                .setParameter("targetLimit", targetLimit)
                 .getResultStream()
                 .collect(Collectors.groupingBy(
                         row -> (Long) row[0],
@@ -130,6 +144,8 @@ public class UsageProcessor implements ItemProcessor<List<Member>, List<FeatureU
         return FeatureUsage.builder()
                 .memberId(memberId)
                 .featureBaseDate(targetDate)
+                .featureBaseAt(featureBaseAt)
+                .batchId(batchId)
                 .totalUsageAmount(totalUsage)
                 .avgDailyUsage((float) avgUsage)
                 .maxUsageAmount(maxUsage)

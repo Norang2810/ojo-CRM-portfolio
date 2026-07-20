@@ -7,7 +7,9 @@ import lombok.Getter;
 import java.time.LocalDateTime;
 
 @Entity
-@Table(name = "payment")
+@Table(name = "payment", indexes = {
+        @Index(name = "idx_payment_updated_invoice", columnList = "updated_at, invoice_id")
+})
 @Getter
 public class Payment {
 
@@ -31,5 +33,9 @@ public class Payment {
 
     @Column(name = "created_at")
     private LocalDateTime createdAt;
+
+    @Column(name = "updated_at", insertable = false, updatable = false,
+            columnDefinition = "DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)")
+    private LocalDateTime updatedAt;
 
 }

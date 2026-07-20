@@ -11,7 +11,9 @@ import java.time.LocalDateTime;
 
 @Entity
 @Getter
-@Table(name = "data_usage")
+@Table(name = "data_usage", indexes = {
+        @Index(name = "idx_usage_updated_member", columnList = "updated_at, member_id")
+})
 public class DataUsage {
 
     @Id
@@ -37,5 +39,9 @@ public class DataUsage {
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    @Column(name = "updated_at", insertable = false, updatable = false,
+            columnDefinition = "DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)")
+    private LocalDateTime updatedAt;
 
 }

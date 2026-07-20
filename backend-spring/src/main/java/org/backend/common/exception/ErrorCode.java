@@ -31,6 +31,7 @@ public enum ErrorCode {
     INVALID_REFRESH_TOKEN(HttpStatus.UNAUTHORIZED, "유효하지 않은 리프레시 토큰입니다."),
     REFRESH_TOKEN_EXPIRED(HttpStatus.UNAUTHORIZED, "리프레시 토큰이 만료되었거나 로그아웃 상태입니다."),
     REFRESH_TOKEN_MISMATCH(HttpStatus.UNAUTHORIZED, "리프레시 토큰이 일치하지 않습니다. 다시 로그인하세요."),
+    TOKEN_ENVIRONMENT_MISMATCH(HttpStatus.UNAUTHORIZED, "토큰 발급 환경과 현재 요청 환경이 일치하지 않습니다. 다시 로그인하세요."),
     ADMIN_NOT_FOUND_FOR_ME(HttpStatus.NOT_FOUND, "관리자 정보를 찾을 수 없습니다."),
     UNAUTHORIZED(HttpStatus.UNAUTHORIZED, "인증 정보가 없습니다. 로그인이 필요합니다."),
 

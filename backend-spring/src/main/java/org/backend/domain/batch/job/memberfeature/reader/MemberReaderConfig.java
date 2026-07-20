@@ -9,6 +9,9 @@ import org.springframework.batch.item.database.builder.JpaPagingItemReaderBuilde
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
+import org.springframework.beans.factory.annotation.Value;
+
+import java.util.Map;
 
 @Configuration
 @RequiredArgsConstructor
@@ -18,36 +21,65 @@ public class MemberReaderConfig {
 
     @Bean
     @StepScope
-    public JpaPagingItemReader<Member> consultationMemberReader() {
-        return buildReader("consultationMemberReader");
+    public JpaPagingItemReader<Member> consultationMemberReader(
+            @Value("#{jobParameters['batchId']}") String batchId,
+            @Value("#{jobParameters['staged']}") String staged,
+            @Value("${analytics.feature.reader-page-size:1000}") int pageSize) {
+        return buildReader("consultationMemberReader", batchId, staged, pageSize);
     }
 
     @Bean
     @StepScope
-    public JpaPagingItemReader<Member> lifecycleMemberReader() {
-        return buildReader("lifecycleMemberReader");
+    public JpaPagingItemReader<Member> lifecycleMemberReader(
+            @Value("#{jobParameters['batchId']}") String batchId,
+            @Value("#{jobParameters['staged']}") String staged,
+            @Value("${analytics.feature.reader-page-size:1000}") int pageSize) {
+        return buildReader("lifecycleMemberReader", batchId, staged, pageSize);
     }
 
     @Bean
     @StepScope
-    public JpaPagingItemReader<Member> monetaryMemberReader() {
-        return buildReader("monetaryMemberReader");
+    public JpaPagingItemReader<Member> monetaryMemberReader(
+            @Value("#{jobParameters['batchId']}") String batchId,
+            @Value("#{jobParameters['staged']}") String staged,
+            @Value("${analytics.feature.reader-page-size:1000}") int pageSize) {
+        return buildReader("monetaryMemberReader", batchId, staged, pageSize);
     }
 
     @Bean
     @StepScope
-    public JpaPagingItemReader<Member> usageMemberReader() {
-        return buildReader("usageMemberReader");
+    public JpaPagingItemReader<Member> usageMemberReader(
+            @Value("#{jobParameters['batchId']}") String batchId,
+            @Value("#{jobParameters['staged']}") String staged,
+            @Value("${analytics.feature.reader-page-size:1000}") int pageSize) {
+        return buildReader("usageMemberReader", batchId, staged, pageSize);
     }
 
 
-    private JpaPagingItemReader<Member> buildReader(String name) {
-        return new JpaPagingItemReaderBuilder<Member>()
+    private JpaPagingItemReader<Member> buildReader(String name, String batchId, String staged, int pageSize) {
+        JpaPagingItemReaderBuilder<Member> builder = new JpaPagingItemReaderBuilder<Member>()
                 .name(name)
                 .entityManagerFactory(emf)
-                .queryString("SELECT m FROM Member m LEFT JOIN FETCH m.consent")
-                .pageSize(1000)
-                .saveState(false)
+                .pageSize(pageSize)
+                .saveState(false);
+
+        if (!Boolean.parseBoolean(staged) || batchId == null || batchId.isBlank()) {
+            return builder
+                    .queryString("SELECT m FROM Member m LEFT JOIN FETCH m.consent ORDER BY m.id")
+                    .build();
+        }
+
+        return builder
+                .queryString("""
+                        SELECT m FROM Member m
+                        LEFT JOIN FETCH m.consent
+                        WHERE EXISTS (
+                            SELECT t.memberId FROM AnalyticsBatchTargetEntity t
+                            WHERE t.batchId = :batchId AND t.memberId = m.id
+                        )
+                        ORDER BY m.id
+                        """)
+                .parameterValues(Map.of("batchId", batchId))
                 .build();
     }
 

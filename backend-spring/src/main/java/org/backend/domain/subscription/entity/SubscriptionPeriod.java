@@ -9,7 +9,9 @@ import java.time.LocalDateTime;
 
 @Entity
 @Getter
-@Table(name = "subscription_period")
+@Table(name = "subscription_period", indexes = {
+        @Index(name = "idx_subscription_updated_member", columnList = "updated_at, member_id")
+})
 public class SubscriptionPeriod {
 
     @Id
@@ -42,5 +44,9 @@ public class SubscriptionPeriod {
 
     @Column(name = "reason_code", columnDefinition = "TEXT")
     private String reasonCode;
+
+    @Column(name = "updated_at", insertable = false, updatable = false,
+            columnDefinition = "DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)")
+    private LocalDateTime updatedAt;
 
 }

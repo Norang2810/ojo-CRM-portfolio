@@ -8,10 +8,8 @@ import org.backend.domain.admin.entity.Admin;
 import org.backend.domain.admin.entity.AdminStatus;
 import org.backend.domain.admin.repository.AdminRepository;
 import org.backend.domain.auth.dto.response.LoginResponse;
-import org.backend.domain.auth.entity.RefreshToken;
 import org.backend.domain.auth.oauth.GoogleOAuthClient;
 import org.backend.domain.auth.oauth.dto.GoogleUserInfo;
-import org.backend.domain.auth.repository.RefreshTokenRepository;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,11 +21,10 @@ public class GoogleOAuthService {
     private final WhitelistService whitelistService;
 
     private final AdminRepository adminRepository;
-    private final JwtProvider jwtProvider;
-    private final RefreshTokenRepository refreshTokenRepository;
+    private final TokenSessionService tokenSessionService;
 
-    @Transactional
-    public LoginResponse loginWithCode(String code) {
+    @Transactional(noRollbackFor = CustomException.class)
+    public LoginResponse loginWithCode(String code, String fingerprint) {
         GoogleUserInfo userInfo = googleOAuthClient.getUserInfoByCode(code);
 
         whitelistService.validateAndAutoRegister(userInfo.email());
@@ -36,34 +33,19 @@ public class GoogleOAuthService {
                 .orElseGet(() -> adminRepository.save(Admin.createGoogleUser(userInfo.name(), userInfo.email())));
 
         if (admin.getStatus() != AdminStatus.ACTIVE) {
-            refreshTokenRepository.deleteByAdminId(admin.getId());
+            tokenSessionService.revokeAllSessions(admin.getId(), "admin-inactive");
             throw new CustomException(ErrorCode.INACTIVE_ADMIN);
         }
 
-        String accessToken = jwtProvider.generateAccessToken(
-                admin.getId(),
-                admin.getEmail(),
-                admin.getRole().name()
-        );
-        String refreshToken = jwtProvider.generateRefreshToken(admin.getId());
-
-        upsertRefreshToken(admin.getId(), refreshToken);
+        JwtProvider.TokenPair pair = tokenSessionService.createSession(admin, fingerprint);
 
         return new LoginResponse(
-                accessToken,
-                refreshToken,
+                pair.accessToken(),
+                pair.refreshToken(),
                 admin.getId(),
                 admin.getEmail(),
                 admin.getRole().name(),
                 admin.getName()
         );
-    }
-
-    private void upsertRefreshToken(Long adminId, String token) {
-        RefreshToken rt = refreshTokenRepository.findByAdminId(adminId)
-                .orElseGet(() -> RefreshToken.builder().adminId(adminId).build());
-
-        rt.updateToken(token);
-        refreshTokenRepository.save(rt);
     }
 }

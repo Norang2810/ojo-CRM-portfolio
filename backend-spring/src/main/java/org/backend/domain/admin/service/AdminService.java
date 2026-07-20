@@ -8,7 +8,7 @@ import org.backend.domain.admin.entity.Admin;
 import org.backend.domain.admin.entity.AdminRole;
 import org.backend.domain.admin.entity.AdminStatus;
 import org.backend.domain.admin.repository.AdminRepository;
-import org.backend.domain.auth.repository.RefreshTokenRepository;
+import org.backend.domain.auth.service.TokenSessionService;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
@@ -23,7 +23,7 @@ import org.springframework.util.StringUtils;
 public class AdminService {
 
     private final AdminRepository adminRepository;
-    private final RefreshTokenRepository refreshTokenRepository;
+    private final TokenSessionService tokenSessionService;
 
     public Page<AdminSummaryDto> getAdmins(Integer page, Integer size, String keyword, AdminStatus status) {
         int p = (page == null) ? 0 : Math.max(page, 0);
@@ -71,8 +71,8 @@ public class AdminService {
 
         target.changeRole(newRole);
 
-        // 권한 즉시 반영을 위해 refresh 토큰 무효화(재로그인/재발급 강제)
-        refreshTokenRepository.deleteByAdminId(target.getId());
+        // 권한 즉시 반영: 모든 sid를 DB에서 폐기하고 Redis 차단 목록에 기록
+        tokenSessionService.revokeAllSessions(target.getId(), "role-changed");
 
         return AdminRoleUpdateResponse.of(target.getId(), target.getRole());
     }
@@ -89,8 +89,8 @@ public class AdminService {
 
         target.changeStatus(newStatus);
 
-        // 상태 변경 즉시 반영: RT 삭제
-        refreshTokenRepository.deleteByAdminId(target.getId());
+        // 상태 변경 즉시 반영: 모든 sid를 DB에서 폐기하고 Redis 차단 목록에 기록
+        tokenSessionService.revokeAllSessions(target.getId(), "status-changed");
 
         return AdminStatusUpdateResponse.of(target.getId(), target.getStatus());
     }

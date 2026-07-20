@@ -4,7 +4,6 @@ import lombok.RequiredArgsConstructor;
 import org.backend.domain.batch.dto.SnapshotWrapper;
 import org.backend.domain.batch.entity.Monetary;
 import org.backend.domain.batch.entity.SnapshotBilling;
-import org.backend.domain.batch.job.rfm.reader.RfmReaderConfig;
 import org.backend.domain.batch.job.rfm.tasklet.KpiTasklet;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.Step;
@@ -26,7 +25,6 @@ public class RfmJobConfig {
 
     private final JobRepository jobRepository;
     private final PlatformTransactionManager transactionManager;
-    private final RfmReaderConfig rfmReaderConfig;
     private final KpiTasklet kpiTasklet;
 
     @Bean
@@ -57,10 +55,11 @@ public class RfmJobConfig {
 
     @Bean
     public Step rfmStep(ItemProcessor<Monetary, ?> rfmProcessor,
+                        ItemReader<Monetary> rfmReader,
                         ItemWriter<Object> rfmWriter){
         return new StepBuilder("rfmStep", jobRepository)
                 .<Monetary, Object>chunk(1000, transactionManager)
-                .reader(rfmReaderConfig.rfmReader())
+                .reader(rfmReader)
                 .processor( (ItemProcessor<? super Monetary, ?>) rfmProcessor )
                 .writer(rfmWriter)
                 .taskExecutor(taskExecutor1())

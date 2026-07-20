@@ -11,7 +11,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.orm.jpa.JpaTransactionManager;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.core.task.SyncTaskExecutor;
 
 @Configuration
 @EnableBatchProcessing
@@ -41,6 +41,15 @@ public class BatchConfig {
         return launcher;
     }
 
+    @Bean
+    public JobLauncher syncJobLauncher(JobRepository jobRepository) throws Exception {
+        TaskExecutorJobLauncher launcher = new TaskExecutorJobLauncher();
+        launcher.setJobRepository(jobRepository);
+        launcher.setTaskExecutor(new SyncTaskExecutor());
+        launcher.afterPropertiesSet();
+        return launcher;
+    }
+
 
     @Bean
     @Qualifier("stepTaskExecutor")
@@ -55,8 +64,4 @@ public class BatchConfig {
         return executor;
     }
 
-    @Bean
-    public RestTemplate restTemplate() {
-        return new RestTemplate();
-    }
 }

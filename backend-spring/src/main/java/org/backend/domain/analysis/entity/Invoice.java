@@ -12,7 +12,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 @Entity
-@Table(name = "invoice")
+@Table(name = "invoice", indexes = {
+        @Index(name = "idx_invoice_updated_member", columnList = "updated_at, member_id")
+})
 @Getter
 @Builder
 @NoArgsConstructor
@@ -42,6 +44,10 @@ public class Invoice {
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    @Column(name = "updated_at", insertable = false, updatable = false,
+            columnDefinition = "DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)")
+    private LocalDateTime updatedAt;
 
     @OneToMany(mappedBy = "invoice", fetch = FetchType.LAZY)
     private List<InvoiceDetail> invoiceDetails;

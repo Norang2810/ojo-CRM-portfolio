@@ -2,13 +2,17 @@
 SET @member_count = 100000;
 SET SESSION cte_max_recursion_depth = 100000;
 
+-- Adjust @member_count to scale the experiment.
+SET @member_count = 100000;
+SET SESSION cte_max_recursion_depth = 100000;
+
+INSERT INTO member (
+    name, phone, email, gender, birth_date, region, address, household_type, created_at, status
+)
 WITH RECURSIVE seq AS (
     SELECT 1 AS n
     UNION ALL
     SELECT n + 1 FROM seq WHERE n < @member_count
-)
-INSERT INTO member (
-    name, phone, email, gender, birth_date, region, address, household_type, created_at, status
 )
 SELECT
     CONCAT('dashboard_member_', n),
@@ -24,7 +28,7 @@ SELECT
         WHEN n % 20 = 0 THEN 'TERMINATED'
         WHEN n % 11 = 0 THEN 'DORMANT'
         ELSE 'ACTIVE'
-    END
+        END
 FROM seq;
 
 INSERT INTO analysis (member_id, rfm_score, type, ltv, lifecycle_stage, created_at)

@@ -10,6 +10,9 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
@@ -19,14 +22,24 @@ import java.util.stream.Collectors;
 @StepScope
 public class MemberLifecycleProcessor implements ItemProcessor<List<Member>, List<Lifecycle>> {
 
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Seoul");
+
     @PersistenceContext
     private EntityManager em;
 
     private final LocalDate featureBaseDate;
+    private final LocalDateTime featureBaseAt;
+    private final String batchId;
 
     public MemberLifecycleProcessor(
-            @Value("#{jobParameters['featureBaseDate']}") String baseDateStr) {
+            @Value("#{jobParameters['featureBaseDate']}") String baseDateStr,
+            @Value("#{jobParameters['featureBaseAt']}") String featureBaseAtStr,
+            @Value("#{jobParameters['batchId']}") String batchId) {
         this.featureBaseDate = (baseDateStr != null) ? LocalDate.parse(baseDateStr) : LocalDate.now();
+        this.featureBaseAt = featureBaseAtStr != null
+                ? LocalDateTime.parse(featureBaseAtStr)
+                : this.featureBaseDate.plusDays(1).atStartOfDay();
+        this.batchId = batchId;
     }
 
     @Override
@@ -41,10 +54,12 @@ public class MemberLifecycleProcessor implements ItemProcessor<List<Member>, Lis
         Map<Long, LocalDate> lastActivityMap = em.createQuery(
                         "SELECT d.member.id, MAX(d.usageDate) FROM DataUsage d " +
                                 "WHERE d.member.id IN :memberIds AND d.usageDate <= :today " +
+                                "AND d.createdAt < :featureBaseAt " +
                                 "GROUP BY d.member.id",
                         Object[].class)
                 .setParameter("memberIds", memberIds)
                 .setParameter("today", today)
+                .setParameter("featureBaseAt", featureBaseAt)
                 .getResultStream()
                 .collect(Collectors.toMap(
                         row -> (Long) row[0],
@@ -59,7 +74,10 @@ public class MemberLifecycleProcessor implements ItemProcessor<List<Member>, Lis
 
 
     private Lifecycle buildLifecycle(Member member, LocalDate today, Map<Long, LocalDate> lastActivityMap) {
-        LocalDate signupDate = member.getCreatedAt().toLocalDate();
+        LocalDate signupDate = member.getCreatedAt()
+                .atOffset(ZoneOffset.UTC)
+                .atZoneSameInstant(BUSINESS_ZONE)
+                .toLocalDate();
         int lifetimeDays = (int) ChronoUnit.DAYS.between(signupDate, today);
 
         LocalDate lastActivityDate = lastActivityMap.get(member.getId());
@@ -77,6 +95,8 @@ public class MemberLifecycleProcessor implements ItemProcessor<List<Member>, Lis
         return Lifecycle.builder()
                 .memberId(member.getId())
                 .featureBaseDate(today)
+                .featureBaseAt(featureBaseAt)
+                .batchId(batchId)
                 .signupDate(signupDate)
                 .memberLifetimeDays(lifetimeDays)
                 .isNewCustomerFlag(lifetimeDays <= 30)

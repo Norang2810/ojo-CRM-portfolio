@@ -4,6 +4,9 @@ package org.backend.config.security;
 import org.backend.config.security.filter.JwtAuthenticationFilter;
 import org.backend.config.security.handler.SecurityExceptionHandler;
 import org.backend.domain.admin.repository.AdminRepository;
+import org.backend.domain.auth.repository.RefreshTokenRepository;
+import org.backend.domain.auth.service.RevokedSessionStore;
+import org.backend.domain.auth.service.TokenFingerprintService;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.HttpMethod;
@@ -30,19 +33,34 @@ public class SecurityConfig {
     private final JwtProvider jwtProvider;
     private final SecurityExceptionHandler securityExceptionHandler;
     private final AdminRepository adminRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
+    private final RevokedSessionStore revokedSessionStore;
+    private final TokenFingerprintService tokenFingerprintService;
 
     public SecurityConfig(JwtProvider jwtProvider,
                           SecurityExceptionHandler securityExceptionHandler,
-                          AdminRepository adminRepository) {
+                          AdminRepository adminRepository,
+                          RefreshTokenRepository refreshTokenRepository,
+                          RevokedSessionStore revokedSessionStore,
+                          TokenFingerprintService tokenFingerprintService) {
         this.jwtProvider = jwtProvider;
         this.securityExceptionHandler = securityExceptionHandler;
         this.adminRepository = adminRepository;
+        this.refreshTokenRepository = refreshTokenRepository;
+        this.revokedSessionStore = revokedSessionStore;
+        this.tokenFingerprintService = tokenFingerprintService;
     }
 
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
 
-        JwtAuthenticationFilter jwtFilter = new JwtAuthenticationFilter(jwtProvider, adminRepository);
+        JwtAuthenticationFilter jwtFilter = new JwtAuthenticationFilter(
+                jwtProvider,
+                adminRepository,
+                refreshTokenRepository,
+                revokedSessionStore,
+                tokenFingerprintService
+        );
 
         http
                 // REST API 기준: CSRF 비활성화

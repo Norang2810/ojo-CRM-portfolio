@@ -12,11 +12,19 @@ public class AdminPrincipal implements UserDetails {
     private final Long adminId;
     private final String email;
     private final String role; // "CS" | "MARKETING" | "ADMIN"
+    private final String sessionId;
+    private final String tokenId;
 
     public AdminPrincipal(Long adminId, String email, String role) {
+        this(adminId, email, role, null, null);
+    }
+
+    public AdminPrincipal(Long adminId, String email, String role, String sessionId, String tokenId) {
         this.adminId = adminId;
         this.email = email;
         this.role = role;
+        this.sessionId = sessionId;
+        this.tokenId = tokenId;
     }
 
     public Long getAdminId() {
@@ -30,6 +38,14 @@ public class AdminPrincipal implements UserDetails {
 
     public String getRole() {
         return role;
+    }
+
+    public String getSessionId() {
+        return sessionId;
+    }
+
+    public String getTokenId() {
+        return tokenId;
     }
 
     @Override

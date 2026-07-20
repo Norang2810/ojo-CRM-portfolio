@@ -1,6 +1,7 @@
 package org.backend.domain.auth.controller;
 
 import jakarta.validation.Valid;
+import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
 import org.backend.common.CommonResponse;
 import org.backend.domain.auth.dto.request.GoogleOAuthLoginRequest;
@@ -12,6 +13,7 @@ import org.backend.domain.auth.dto.response.TokenResponse;
 import org.backend.domain.auth.security.AdminPrincipal;
 import org.backend.domain.auth.service.AuthService;
 import org.backend.domain.auth.service.GoogleOAuthService;
+import org.backend.domain.auth.service.TokenFingerprintService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.Authentication;
 import org.springframework.web.bind.annotation.*;
@@ -23,10 +25,14 @@ public class AuthController {
 
     private final AuthService authService;
     private final GoogleOAuthService googleOAuthService;
+    private final TokenFingerprintService tokenFingerprintService;
 
         @PostMapping("/login")
-        public ResponseEntity<CommonResponse<LoginResponse>> login(@RequestBody LoginRequest request) {
-            LoginResponse response = authService.login(request);
+        public ResponseEntity<CommonResponse<LoginResponse>> login(
+                @RequestBody LoginRequest request,
+                HttpServletRequest httpRequest
+        ) {
+            LoginResponse response = authService.login(request, tokenFingerprintService.from(httpRequest));
             return ResponseEntity.ok(CommonResponse.success(response, "로그인 성공"));
         }
 
@@ -43,8 +49,11 @@ public class AuthController {
      * refreshToken으로 accessToken 재발급 (+ refresh 로테이션)
      */
     @PostMapping("/refresh")
-    public ResponseEntity<TokenResponse> refresh(@RequestBody @Valid RefreshRequest request) {
-        return ResponseEntity.ok(authService.refresh(request));
+    public ResponseEntity<TokenResponse> refresh(
+            @RequestBody @Valid RefreshRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        return ResponseEntity.ok(authService.refresh(request, tokenFingerprintService.from(httpRequest)));
     }
 
     /**
@@ -54,7 +63,7 @@ public class AuthController {
     @PostMapping("/logout")
     public ResponseEntity<Void> logout(Authentication authentication) {
         AdminPrincipal principal = extractPrincipal(authentication);
-        authService.logout(principal.getAdminId());
+        authService.logout(principal.getAdminId(), principal.getSessionId());
         return ResponseEntity.ok().build();
     }
 
@@ -84,8 +93,14 @@ public class AuthController {
     }
 
     @PostMapping("/google")
-    public ResponseEntity<CommonResponse<LoginResponse>> googleLogin(@RequestBody @Valid GoogleOAuthLoginRequest request) {
-        LoginResponse result = googleOAuthService.loginWithCode(request.code());
+    public ResponseEntity<CommonResponse<LoginResponse>> googleLogin(
+            @RequestBody @Valid GoogleOAuthLoginRequest request,
+            HttpServletRequest httpRequest
+    ) {
+        LoginResponse result = googleOAuthService.loginWithCode(
+                request.code(),
+                tokenFingerprintService.from(httpRequest)
+        );
         return ResponseEntity.ok(CommonResponse.success(result, "구글 로그인 성공"));
     }
 

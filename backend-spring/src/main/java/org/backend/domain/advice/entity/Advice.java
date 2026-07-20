@@ -10,7 +10,9 @@ import java.time.LocalDateTime;
 
 
 @Entity
-@Table(name = "advice")
+@Table(name = "advice", indexes = {
+        @Index(name = "idx_advice_updated_member", columnList = "updated_at, member_id")
+})
 @Getter
 @Setter
 @NoArgsConstructor
@@ -62,6 +64,10 @@ public class Advice {
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
+
+    @Column(name = "updated_at", insertable = false, updatable = false,
+            columnDefinition = "DATETIME(6) DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6)")
+    private LocalDateTime updatedAt;
 
     @Column(name = "satisfaction_score")
     private Long satisfactionScore;

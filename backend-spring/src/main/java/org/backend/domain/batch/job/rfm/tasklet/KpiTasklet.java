@@ -21,6 +21,8 @@ public class KpiTasklet implements Tasklet {
         log.info("kpi 집계 시작");
 
         String baseMonth = (String)chunkContext.getStepContext().getJobParameters().get("baseMonth");
+        String featureBatchId = (String) chunkContext.getStepContext()
+                .getJobParameters().get("featureBatchId");
         String baseMonthClean = baseMonth.replace("-", "");
 
         // 중복 실행 방지 - skip vs over write
@@ -54,11 +56,11 @@ public class KpiTasklet implements Tasklet {
                     "END AS nrr, "+
                     "? "+
                     "From feature_monetary fm " +
-                    "JOIN analysis a ON fm.member_id = a.member_id " +
-                    "AND DATE_FORMAT(a.created_at, '%Y%m') = ? " +
-                    "JOIN feature_lifecycle fl ON fm.member_id = fl.member_id";
+                    "JOIN analysis_current a ON fm.member_id = a.member_id " +
+                    "JOIN feature_lifecycle fl ON fm.member_id = fl.member_id " +
+                    "WHERE fm.batch_id = ? AND fl.batch_id = ?";
 
-        jdbcTemplate.update(sql, baseMonthClean, baseMonthClean);
+        jdbcTemplate.update(sql, baseMonthClean, featureBatchId, featureBatchId);
 
         log.info("kpi 집계 완료: {}", baseMonthClean);
         return RepeatStatus.FINISHED;

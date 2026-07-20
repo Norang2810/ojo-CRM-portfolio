@@ -9,6 +9,8 @@ import org.backend.domain.batch.scheduler.MemberFeatureScheduler;
 import org.backend.domain.batch.service.BatchResetService;
 import org.backend.domain.batch.service.BatchService;
 import org.backend.domain.batch.service.MemberFeatureService;
+import org.backend.domain.batch.service.SnapshotRollbackService;
+import org.backend.domain.analysis.service.DashboardAggregationService;
 import org.backend.domain.member.repository.MemberRepository;
 import org.springframework.batch.core.Job;
 import org.springframework.batch.core.JobExecution;
@@ -43,6 +45,8 @@ public class BatchController {
     private final MemberFeatureService memberFeatureService;
 
     private final MemberFeatureScheduler memberFeatureScheduler;
+    private final SnapshotRollbackService snapshotRollbackService;
+    private final DashboardAggregationService dashboardAggregationService;
 
     // 1. 배치 실행
     @PostMapping("/run")
@@ -178,5 +182,20 @@ public class BatchController {
     public String testPipeline() {
         memberFeatureScheduler.runMemberFeatureJob(); // 스케줄러 메서드 직접 호출
         return "Full Pipeline Started Check Logs!";
+    }
+
+    @PostMapping("/analytics/{batchId}/retry")
+    public CommonResponse<String> retryAnalyticsRun(@PathVariable String batchId) {
+        Boolean accepted = memberFeatureScheduler.retryFailedRun(batchId);
+        return Boolean.TRUE.equals(accepted)
+                ? CommonResponse.success(batchId, "Failed analytics run reprocessed")
+                : CommonResponse.fail("Only an existing FAILED analytics run can be reprocessed");
+    }
+
+    @PostMapping("/analytics/snapshots/{snapshotVersion}/activate")
+    public CommonResponse<String> activateSnapshot(@PathVariable String snapshotVersion) {
+        snapshotRollbackService.activate(snapshotVersion);
+        dashboardAggregationService.refreshDashboardStats();
+        return CommonResponse.success(snapshotVersion, "Analytics snapshot activated");
     }
 }

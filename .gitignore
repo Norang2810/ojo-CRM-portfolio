@@ -60,3 +60,6 @@ es_data
 .env
 .env.*.env
 mysql_data/
+
+# Agent instructions
+AGENTS.md

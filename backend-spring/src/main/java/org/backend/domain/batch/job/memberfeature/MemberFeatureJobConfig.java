@@ -17,6 +17,7 @@ import org.springframework.batch.item.ItemProcessor;
 import org.springframework.batch.item.database.JdbcBatchItemWriter;
 import org.springframework.batch.item.database.JpaPagingItemReader;
 import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -36,7 +37,8 @@ public class MemberFeatureJobConfig {
     @Qualifier("stepTaskExecutor")
     private final ThreadPoolTaskExecutor stepTaskExecutor;
 
-    private static final int CHUNK_SIZE = 1000;
+    @Value("${analytics.feature.chunk-size:500}")
+    private int chunkSize;
 
     private <T> void writeFlattened(Chunk<? extends List<T>> items, JdbcBatchItemWriter<T> writer) throws Exception {
         List<T> flat = items.getItems().stream()
@@ -66,7 +68,7 @@ public class MemberFeatureJobConfig {
 
         return new StepBuilder("consultationStep", jobRepository)
                 .<List<Member>, List<ConsultationBasics>>chunk(1, transactionManager)
-                .reader(new ChunkMemberReader(consultationMemberReader, CHUNK_SIZE))
+                .reader(new ChunkMemberReader(consultationMemberReader, chunkSize))
                 .processor(consultationProcessor)
                 .writer(items -> writeFlattened(items, consultationWriter))
                 .taskExecutor(stepTaskExecutor)
@@ -81,7 +83,7 @@ public class MemberFeatureJobConfig {
 
         return new StepBuilder("lifecycleStep", jobRepository)
                 .<List<Member>, List<Lifecycle>>chunk(1, transactionManager)
-                .reader(new ChunkMemberReader(lifecycleMemberReader, CHUNK_SIZE))
+                .reader(new ChunkMemberReader(lifecycleMemberReader, chunkSize))
                 .processor(memberLifecycleProcessor)
                 .writer(items -> writeFlattened(items, lifecycleWriter))
                 .taskExecutor(stepTaskExecutor)
@@ -96,7 +98,7 @@ public class MemberFeatureJobConfig {
 
         return new StepBuilder("monetaryStep", jobRepository)
                 .<List<Member>, List<Monetary>>chunk(1, transactionManager)
-                .reader(new ChunkMemberReader(monetaryMemberReader, CHUNK_SIZE))
+                .reader(new ChunkMemberReader(monetaryMemberReader, chunkSize))
                 .processor(monetaryProcessor)
                 .writer(items -> writeFlattened(items, monetaryWriter))
                 .taskExecutor(stepTaskExecutor)
@@ -111,7 +113,7 @@ public class MemberFeatureJobConfig {
 
         return new StepBuilder("usageStep", jobRepository)
                 .<List<Member>, List<FeatureUsage>>chunk(1, transactionManager)
-                .reader(new ChunkMemberReader(usageMemberReader, CHUNK_SIZE))
+                .reader(new ChunkMemberReader(usageMemberReader, chunkSize))
                 .processor(usageProcessor)
                 .writer(items -> writeFlattened(items, usageWriter))
                 .taskExecutor(stepTaskExecutor)

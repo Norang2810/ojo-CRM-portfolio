@@ -46,6 +46,12 @@ public class DashboardDailyStats {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
+    @Column(name = "snapshot_version", length = 64)
+    private String snapshotVersion;
+
+    @Column(name = "computed_at")
+    private LocalDateTime computedAt;
+
     @Builder
     private DashboardDailyStats(
             LocalDate statDate,
@@ -63,5 +69,10 @@ public class DashboardDailyStats {
         this.newCustomers = newCustomers;
         this.churnedCustomers = churnedCustomers;
         this.activeCustomers = activeCustomers;
+    }
+
+    public void markComputed(String snapshotVersion, LocalDateTime computedAt) {
+        this.snapshotVersion = snapshotVersion;
+        this.computedAt = computedAt;
     }
 }

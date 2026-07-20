@@ -13,4 +13,12 @@ public class BatchHistoryItem {
     private String batchStatus;
     private LocalDateTime startTime;
     private LocalDateTime endTime;
+    private String runType;
+    private LocalDateTime windowStartAt;
+    private LocalDateTime windowEndAt;
+    private long targetCount;
+    private long successCount;
+    private long failureCount;
+    private String modelVersion;
+    private LocalDateTime lastSuccessfulCompletion;
 }

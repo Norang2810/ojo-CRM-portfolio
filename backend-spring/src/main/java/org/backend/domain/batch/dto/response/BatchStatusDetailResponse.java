@@ -18,4 +18,9 @@ public class BatchStatusDetailResponse {
     private long failCount;           // 실패 건수 (Process/Write Skip 등 포함)
     private LocalDateTime startTime;
     private LocalDateTime endTime;
+    private String runType;
+    private LocalDateTime windowStartAt;
+    private LocalDateTime windowEndAt;
+    private String modelVersion;
+    private LocalDateTime lastSuccessfulCompletion;
 }

@@ -6,17 +6,22 @@ import org.backend.domain.analysis.entity.DashboardSummaryStats;
 import org.backend.domain.analysis.repository.DashboardDailyStatsRepository;
 import org.backend.domain.analysis.repository.DashboardRepository;
 import org.backend.domain.analysis.repository.DashboardSummaryStatsRepository;
+import org.backend.domain.analysis.repository.AnalyticsSnapshotManifestRepository;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.time.Clock;
+import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 
@@ -39,8 +44,23 @@ class DashboardAggregationServiceTest {
     @Mock
     private Cache cache;
 
-    @InjectMocks
     private DashboardAggregationService dashboardAggregationService;
+    @Mock
+    private AnalyticsSnapshotManifestRepository manifestRepository;
+
+    @BeforeEach
+    void setUp() {
+        dashboardAggregationService = new DashboardAggregationService(
+                dashboardRepository,
+                dashboardSummaryStatsRepository,
+                dashboardDailyStatsRepository,
+                dashboardService,
+                cacheManager,
+                manifestRepository,
+                Clock.fixed(Instant.parse("2026-07-18T03:00:00Z"), ZoneOffset.UTC)
+        );
+        ReflectionTestUtils.setField(dashboardAggregationService, "businessTimeZone", "Asia/Seoul");
+    }
 
     @AfterEach
     void clearSynchronization() {
@@ -51,7 +71,7 @@ class DashboardAggregationServiceTest {
 
     @Test
     void refreshesDashboardCacheOnlyAfterSuccessfulCommit() {
-        LocalDate today = LocalDate.now();
+        LocalDate today = LocalDate.of(2026, 7, 18);
         DashboardSummaryStats existingSummary = DashboardSummaryStats.builder()
                 .statDate(today)
                 .currentCustomers(0L)
@@ -79,19 +99,20 @@ class DashboardAggregationServiceTest {
         when(dashboardRepository.getDailyActiveCustomers(any(), any())).thenReturn(List.of(daily(today, 8L)));
         when(dashboardSummaryStatsRepository.findByStatDate(today)).thenReturn(Optional.of(existingSummary));
         when(dashboardDailyStatsRepository.findByStatDate(any())).thenReturn(Optional.empty());
-        when(cacheManager.getCache("dashboardCache")).thenReturn(cache);
+        when(manifestRepository.findActive()).thenReturn(Optional.empty());
+        when(cacheManager.getCache("dashboardAnalyticCache")).thenReturn(cache);
 
         TransactionSynchronizationManager.initSynchronization();
 
         dashboardAggregationService.refreshDashboardStats();
 
-        verify(cache, never()).clear();
+        verify(cache, never()).evict(any());
         verify(dashboardService, never()).getDashboardSummary();
 
         TransactionSynchronizationManager.getSynchronizations()
                 .forEach(sync -> sync.afterCommit());
 
-        verify(cache).clear();
+        verify(cache).evict("legacy");
         verify(dashboardService).getDashboardSummary();
     }
 

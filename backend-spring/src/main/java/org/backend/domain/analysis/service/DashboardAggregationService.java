@@ -2,6 +2,7 @@ package org.backend.domain.analysis.service;
 
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.backend.domain.analysis.dto.projection.DashboardDailyCountProjection;
 import org.backend.domain.analysis.dto.projection.DashboardSegmentCountProjection;
 import org.backend.domain.analysis.entity.DashboardDailyStats;
@@ -9,14 +10,20 @@ import org.backend.domain.analysis.entity.DashboardSummaryStats;
 import org.backend.domain.analysis.repository.DashboardDailyStatsRepository;
 import org.backend.domain.analysis.repository.DashboardRepository;
 import org.backend.domain.analysis.repository.DashboardSummaryStatsRepository;
+import org.backend.domain.analysis.repository.AnalyticsSnapshotManifestRepository;
 import org.springframework.cache.Cache;
 import org.springframework.cache.CacheManager;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.time.LocalDate;
+import java.time.Clock;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,28 +38,47 @@ public class DashboardAggregationService {
     private final DashboardDailyStatsRepository dashboardDailyStatsRepository;
     private final DashboardService dashboardService;
     private final CacheManager cacheManager;
+    private final AnalyticsSnapshotManifestRepository manifestRepository;
+    private final Clock clock;
+
+    @Value("${analytics.time-zone:Asia/Seoul}")
+    private String businessTimeZone;
 
     @Transactional
+    @SchedulerLock(
+            name = "dashboard-refresh",
+            lockAtMostFor = "PT10M",
+            lockAtLeastFor = "PT30S"
+    )
     public void refreshDashboardStats() {
-        LocalDate today = LocalDate.now();
+        ZoneId zone = ZoneId.of(businessTimeZone);
+        LocalDate today = LocalDate.now(clock.withZone(zone));
+        var activeSnapshot = manifestRepository.findActive();
+        String snapshotVersion = activeSnapshot
+                .map(AnalyticsSnapshotManifestRepository.ActiveSnapshot::version)
+                .orElse("legacy");
+        LocalDateTime computedAt = LocalDateTime.ofInstant(clock.instant(), ZoneOffset.UTC);
         LocalDate startOfThisMonth = today.withDayOfMonth(1);
 
         LocalDate startOfThisWeek = today.minusDays(today.getDayOfWeek().getValue() - 1);
         LocalDate startOfLastWeek = startOfThisWeek.minusWeeks(1);
         LocalDate endOfLastWeek = startOfThisWeek.minusDays(1);
 
-        String todayExclusive = today.plusDays(1).toString();
-        String monthStartStr = startOfThisMonth.toString();
-        String thisWeekStartStr = startOfThisWeek.toString();
-        String lastWeekStartStr = startOfLastWeek.toString();
-        String lastWeekEndStr = endOfLastWeek.plusDays(1).toString();
+        String todayExclusive = toUtc(today.plusDays(1), zone);
+        String monthStartStr = toUtc(startOfThisMonth, zone);
+        String thisWeekStartStr = toUtc(startOfThisWeek, zone);
+        String lastWeekStartStr = toUtc(startOfLastWeek, zone);
+        String lastWeekEndStr = toUtc(endOfLastWeek.plusDays(1), zone);
 
         long currentTotal = dashboardRepository.countCurrentCustomers(todayExclusive);
         long lastWeekTotal = dashboardRepository.countCurrentCustomers(lastWeekEndStr);
 
-        long newActiveThisMonth = dashboardRepository.countNewActiveCustomers(monthStartStr, todayExclusive);
-        long newActiveThisWeek = dashboardRepository.countNewActiveCustomers(thisWeekStartStr, todayExclusive);
-        long newActiveLastWeek = dashboardRepository.countNewActiveCustomers(lastWeekStartStr, lastWeekEndStr);
+        long newActiveThisMonth = dashboardRepository.countNewActiveCustomers(
+                startOfThisMonth.toString(), today.plusDays(1).toString());
+        long newActiveThisWeek = dashboardRepository.countNewActiveCustomers(
+                startOfThisWeek.toString(), today.plusDays(1).toString());
+        long newActiveLastWeek = dashboardRepository.countNewActiveCustomers(
+                startOfLastWeek.toString(), endOfLastWeek.plusDays(1).toString());
 
         long newThisMonth = dashboardRepository.countNewCustomers(monthStartStr, todayExclusive);
         long newThisWeek = dashboardRepository.countNewCustomers(thisWeekStartStr, todayExclusive);
@@ -117,15 +143,17 @@ public class DashboardAggregationService {
                 atRisk,
                 churned
         );
+        summary.markComputed(snapshotVersion, computedAt);
 
         dashboardSummaryStatsRepository.save(summary);
 
         LocalDate sevenDaysAgo = today.minusDays(6);
-        String sevenDaysAgoStr = sevenDaysAgo.toString();
+        String sevenDaysAgoStr = toUtc(sevenDaysAgo, zone);
 
         Map<String, Long> mappedNew = parseDaily(dashboardRepository.getDailyNewCustomers(sevenDaysAgoStr, todayExclusive));
         Map<String, Long> mappedChurn = parseDaily(dashboardRepository.getDailyChurnedCustomers(sevenDaysAgoStr, todayExclusive));
-        Map<String, Long> mappedActive = parseDaily(dashboardRepository.getDailyActiveCustomers(sevenDaysAgoStr, todayExclusive));
+        Map<String, Long> mappedActive = parseDaily(dashboardRepository.getDailyActiveCustomers(
+                sevenDaysAgo.toString(), today.plusDays(1).toString()));
 
         for (int i = 0; i <= 6; i++) {
             LocalDate statDate = sevenDaysAgo.plusDays(i);
@@ -144,6 +172,7 @@ public class DashboardAggregationService {
                     mappedChurn.getOrDefault(key, 0L),
                     mappedActive.getOrDefault(key, 0L)
             );
+            dailyStats.markComputed(snapshotVersion, computedAt);
 
             dashboardDailyStatsRepository.save(dailyStats);
         }
@@ -167,16 +196,32 @@ public class DashboardAggregationService {
         return map;
     }
 
+    private String toUtc(LocalDate businessDate, ZoneId zone) {
+        LocalDateTime utc = LocalDateTime.ofInstant(
+                businessDate.atStartOfDay(zone).toInstant(),
+                ZoneOffset.UTC
+        );
+        return utc.toString();
+    }
+
     private void scheduleDashboardCacheRefreshAfterCommit() {
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
             @Override
             public void afterCommit() {
-                Cache cache = cacheManager.getCache("dashboardCache");
+                String version = manifestRepository.findActive()
+                        .map(AnalyticsSnapshotManifestRepository.ActiveSnapshot::version)
+                        .orElse("legacy");
+                Cache cache = cacheManager.getCache("dashboardAnalyticCache");
                 if (cache != null) {
-                    cache.clear();
+                    cache.evict(version);
                 }
-                dashboardService.getDashboardSummary();
-                log.info("Dashboard cache warmed after successful aggregation commit");
+                try {
+                    dashboardService.getDashboardSummary();
+                    log.info("Dashboard version cache warmed after aggregation commit - snapshotVersion={}", version);
+                } catch (RuntimeException warmFailure) {
+                    log.error("Dashboard cache warm failed; DB/stale fallback remains available - snapshotVersion={}",
+                            version, warmFailure);
+                }
             }
         });
     }

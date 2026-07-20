@@ -44,40 +44,43 @@ public interface DashboardRepository extends JpaRepository<Member, Long> {
 
     @Query(value = """
         SELECT COUNT(*)
-        FROM analysis a
-        JOIN (
-            SELECT member_id, MAX(created_at) AS max_date
-            FROM analysis
-            GROUP BY member_id
-        ) latest
-          ON a.member_id = latest.member_id
-         AND a.created_at = latest.max_date
+        FROM analysis_current a
         WHERE a.type IN ('RISK', 'SLEEP')
-          AND a.created_at >= :startDate
-          AND a.created_at < :endDate
+          AND :startDate <= :endDate
         """, nativeQuery = true)
     long countAtRiskCustomers(@Param("startDate") String startDate, @Param("endDate") String endDate);
 
     @Query(value = """
-        SELECT DATE(created_at) AS statDate,
+        SELECT DATE(CONVERT_TZ(created_at, '+00:00', '+09:00')) AS statDate,
                COUNT(*) AS countValue
         FROM member
         WHERE created_at >= :startDate
           AND created_at < :endDate
-        GROUP BY DATE(created_at)
+        GROUP BY DATE(CONVERT_TZ(created_at, '+00:00', '+09:00'))
         """, nativeQuery = true)
     List<DashboardDailyCountProjection> getDailyNewCustomers(@Param("startDate") String startDate, @Param("endDate") String endDate);
 
     @Query(value = """
-        SELECT DATE(created_at) AS statDate,
+        SELECT DATE(CONVERT_TZ(changed_at, '+00:00', '+09:00')) AS statDate,
                COUNT(*) AS countValue
-        FROM member
+        FROM member_status_history
         WHERE status = 'TERMINATED'
-          AND created_at >= :startDate
-          AND created_at < :endDate
-        GROUP BY DATE(created_at)
+          AND changed_at >= :startDate
+          AND changed_at < :endDate
+        GROUP BY DATE(CONVERT_TZ(changed_at, '+00:00', '+09:00'))
         """, nativeQuery = true)
     List<DashboardDailyCountProjection> getDailyChurnedCustomers(@Param("startDate") String startDate, @Param("endDate") String endDate);
+
+    @Query(value = """
+        SELECT COUNT(DISTINCT member_id)
+        FROM member_status_history
+        WHERE status = 'TERMINATED'
+          AND changed_at >= :startDate
+          AND changed_at < :endDate
+        """, nativeQuery = true)
+    long countChurnedCustomersByStatusChange(
+            @Param("startDate") String startDate,
+            @Param("endDate") String endDate);
 
     @Query(value = """
         SELECT DATE(feature_base_date) AS statDate,
@@ -93,14 +96,7 @@ public interface DashboardRepository extends JpaRepository<Member, Long> {
     @Query(value = """
         SELECT a.type AS type,
                COUNT(*) AS countValue
-        FROM analysis a
-        JOIN (
-            SELECT member_id, MAX(created_at) AS max_date
-            FROM analysis
-            GROUP BY member_id
-        ) latest
-          ON a.member_id = latest.member_id
-         AND a.created_at = latest.max_date
+        FROM analysis_current a
         GROUP BY a.type
         """, nativeQuery = true)
     List<DashboardSegmentCountProjection> getSegmentCounts();

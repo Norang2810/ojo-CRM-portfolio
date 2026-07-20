@@ -13,6 +13,8 @@ import org.springframework.stereotype.Component;
 import java.time.DayOfWeek;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
@@ -22,28 +24,38 @@ import java.util.stream.Collectors;
 @StepScope
 public class ConsultationProcessor implements ItemProcessor<List<Member>, List<ConsultationBasics>> {
 
+    private static final ZoneId BUSINESS_ZONE = ZoneId.of("Asia/Seoul");
+
     @PersistenceContext
     private EntityManager em;
 
     private final LocalDate featureBaseDate;
+    private final LocalDateTime featureBaseAt;
+    private final String batchId;
 
     public ConsultationProcessor(
-            @Value("#{jobParameters['featureBaseDate']}") String baseDateStr) {
+            @Value("#{jobParameters['featureBaseDate']}") String baseDateStr,
+            @Value("#{jobParameters['featureBaseAt']}") String featureBaseAtStr,
+            @Value("#{jobParameters['batchId']}") String batchId) {
         this.featureBaseDate = (baseDateStr != null) ? LocalDate.parse(baseDateStr) : LocalDate.now();
+        this.featureBaseAt = featureBaseAtStr != null
+                ? LocalDateTime.parse(featureBaseAtStr)
+                : this.featureBaseDate.plusDays(1).atStartOfDay();
+        this.batchId = batchId;
     }
 
     @Override
     public List<ConsultationBasics> process(List<Member> members) {
         LocalDate targetDate = this.featureBaseDate;
         //  targetDate 당일 23:59:59 까지의 상담만 포함 — 배치 기준일 이후 데이터 오염 방지
-        LocalDateTime targetLimit = targetDate.atTime(23, 59, 59);
+        LocalDateTime targetLimit = featureBaseAt;
 
         List<Long> memberIds = members.stream().map(Member::getId).collect(Collectors.toList());
 
 
         List<Advice> allAdvices = em.createQuery(
                         "SELECT a FROM Advice a JOIN FETCH a.category " +
-                                "WHERE a.member.id IN :memberIds AND a.createdAt <= :targetLimit",
+                                "WHERE a.member.id IN :memberIds AND a.createdAt < :targetLimit",
                         Advice.class)
                 .setParameter("memberIds", memberIds)
                 .setParameter("targetLimit", targetLimit)
@@ -67,6 +79,8 @@ public class ConsultationProcessor implements ItemProcessor<List<Member>, List<C
         ConsultationBasics basics = new ConsultationBasics();
         basics.setMemberId(memberId);
         basics.setFeatureBaseDate(targetDate);
+        basics.setFeatureBaseAt(featureBaseAt);
+        basics.setBatchId(batchId);
         return basics;
     }
 
@@ -80,14 +94,16 @@ public class ConsultationProcessor implements ItemProcessor<List<Member>, List<C
             basics.setLastConsultDate(null);
             basics.setTopConsultCategory("None");
             basics.setTotalComplaintCount(0);
-            basics.setLastConsultDaysAgo(null);
+            // Keep the staging and current schemas consistent: a customer with no
+            // consultation history has no nullable value in the published feature.
+            basics.setLastConsultDaysAgo(999);
             basics.setNightConsultCount(0);
             basics.setWeekendConsultCount(0);
             return;
         }
 
-        LocalDateTime sevenDaysAgo  = targetDate.minusDays(7).atStartOfDay();
-        LocalDateTime thirtyDaysAgo = targetDate.minusDays(30).atStartOfDay();
+        LocalDateTime sevenDaysAgo  = featureBaseAt.minusDays(7);
+        LocalDateTime thirtyDaysAgo = featureBaseAt.minusDays(30);
 
         int  totalCount = adviceList.size();
         long last7d     = adviceList.stream().filter(a -> a.getCreatedAt().isAfter(sevenDaysAgo)).count();
@@ -95,18 +111,21 @@ public class ConsultationProcessor implements ItemProcessor<List<Member>, List<C
 
         LocalDateTime lastDateTime = adviceList.stream()
                 .map(Advice::getCreatedAt).max(LocalDateTime::compareTo).orElse(null);
-        LocalDate lastDate = (lastDateTime != null) ? lastDateTime.toLocalDate() : null;
+        LocalDate lastDate = (lastDateTime != null) ? toBusinessTime(lastDateTime).toLocalDate() : null;
         int daysAgo = (lastDate != null) ? (int) ChronoUnit.DAYS.between(lastDate, targetDate) : 999;
 
         // 야간 상담 (22시 ~ 06시)
         int nightCount = (int) adviceList.stream()
-                .filter(a -> a.getCreatedAt().getHour() >= 22 || a.getCreatedAt().getHour() < 6)
+                .filter(a -> {
+                    int hour = toBusinessTime(a.getCreatedAt()).getHour();
+                    return hour >= 22 || hour < 6;
+                })
                 .count();
 
         // 주말 상담
         int weekendCount = (int) adviceList.stream()
                 .filter(a -> {
-                    DayOfWeek dow = a.getCreatedAt().getDayOfWeek();
+                    DayOfWeek dow = toBusinessTime(a.getCreatedAt()).getDayOfWeek();
                     return dow == DayOfWeek.SATURDAY || dow == DayOfWeek.SUNDAY;
                 }).count();
 
@@ -132,7 +151,8 @@ public class ConsultationProcessor implements ItemProcessor<List<Member>, List<C
         basics.setTotalConsultCount(totalCount);
         basics.setLast7dConsultCount((int) last7d);
         basics.setLast30dConsultCount((int) last30d);
-        long lifetimeMonths = ChronoUnit.MONTHS.between(member.getCreatedAt().toLocalDate(), targetDate);
+        long lifetimeMonths = ChronoUnit.MONTHS.between(
+                toBusinessTime(member.getCreatedAt()).toLocalDate(), targetDate);
         basics.setAvgMonthlyConsultCount(lifetimeMonths > 0 ? totalCount / (float) lifetimeMonths : totalCount);
         basics.setLastConsultDate(lastDate);
         basics.setTopConsultCategory(topCategory);
@@ -140,5 +160,9 @@ public class ConsultationProcessor implements ItemProcessor<List<Member>, List<C
         basics.setLastConsultDaysAgo(daysAgo);
         basics.setNightConsultCount(nightCount);
         basics.setWeekendConsultCount(weekendCount);
+    }
+
+    private LocalDateTime toBusinessTime(LocalDateTime utc) {
+        return utc.atOffset(ZoneOffset.UTC).atZoneSameInstant(BUSINESS_ZONE).toLocalDateTime();
     }
 }

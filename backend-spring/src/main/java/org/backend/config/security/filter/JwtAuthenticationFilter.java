@@ -10,6 +10,9 @@ import org.backend.domain.admin.entity.Admin;
 import org.backend.domain.admin.entity.AdminStatus;
 import org.backend.domain.admin.repository.AdminRepository;
 import org.backend.domain.auth.security.AdminPrincipal;
+import org.backend.domain.auth.repository.RefreshTokenRepository;
+import org.backend.domain.auth.service.RevokedSessionStore;
+import org.backend.domain.auth.service.TokenFingerprintService;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -22,10 +25,22 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtProvider jwtProvider;
     private final AdminRepository adminRepository;
+    private final RefreshTokenRepository refreshTokenRepository;
+    private final RevokedSessionStore revokedSessionStore;
+    private final TokenFingerprintService tokenFingerprintService;
 
-    public JwtAuthenticationFilter(JwtProvider jwtProvider, AdminRepository adminRepository) {
+    public JwtAuthenticationFilter(
+            JwtProvider jwtProvider,
+            AdminRepository adminRepository,
+            RefreshTokenRepository refreshTokenRepository,
+            RevokedSessionStore revokedSessionStore,
+            TokenFingerprintService tokenFingerprintService
+    ) {
         this.jwtProvider = jwtProvider;
         this.adminRepository = adminRepository;
+        this.refreshTokenRepository = refreshTokenRepository;
+        this.revokedSessionStore = revokedSessionStore;
+        this.tokenFingerprintService = tokenFingerprintService;
     }
 
     @Override
@@ -43,14 +58,23 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             String adminIdStr = claims.getSubject();
             String email = (String) claims.get("email");
             String role = (String) claims.get("role");
+            String sessionId = claims.get("sid", String.class);
+            String tokenId = claims.getId();
+            String tokenFingerprint = claims.get("fp", String.class);
+            String requestFingerprint = tokenFingerprintService.from(request);
 
             // ✅ DB status 체크: 비활성이면 인증 세팅하지 않음 (즉시 차단)
-            if (StringUtils.hasText(adminIdStr)) {
+            if (StringUtils.hasText(adminIdStr)
+                    && StringUtils.hasText(sessionId)
+                    && StringUtils.hasText(tokenId)
+                    && tokenFingerprintService.matches(requestFingerprint, tokenFingerprint)
+                    && !revokedSessionStore.isRevoked(sessionId)) {
                 Long adminId = Long.parseLong(adminIdStr);
 
                 Admin admin = adminRepository.findById(adminId).orElse(null);
-                if (admin != null && admin.getStatus() == AdminStatus.ACTIVE) {
-                    AdminPrincipal principal = new AdminPrincipal(adminId, email, role);
+                boolean activeSession = refreshTokenRepository.existsBySessionIdAndAdminId(sessionId, adminId);
+                if (admin != null && admin.getStatus() == AdminStatus.ACTIVE && activeSession) {
+                    AdminPrincipal principal = new AdminPrincipal(adminId, email, role, sessionId, tokenId);
                     Authentication auth = new UsernamePasswordAuthenticationToken(
                             principal,
                             null,
