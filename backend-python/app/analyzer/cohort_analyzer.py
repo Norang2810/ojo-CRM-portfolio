@@ -1,66 +1,137 @@
+import logging
+
 import pandas as pd
-import numpy as np
+from sqlalchemy import text
 
-def calculate_segmented_cohort(ojo_engine, segment_type='all'):
-    print(f"[분석] {segment_type} 기준 코호트 분석 중...")
-    
-    # 1. 원천 데이터 로드 (쿼리 부분 인덴트 정렬)
-    query = """
-    SELECT 
-        m.member_id, 
-        m.created_at as join_date, 
-        i.created_at as order_date,
-        c.total_consult_count as consult_count,
-        mon.total_revenue as total_amount, 
-        r.monetary as rfm_monetary,  -- grade 대신 rfm 테이블의 monetary를 가져옴
-        r.frequency as rfm_frequency
-    FROM member m
-    JOIN invoice i ON m.member_id = i.member_id
-    LEFT JOIN feature_consultation c ON m.member_id = c.member_id
-    LEFT JOIN feature_monetary mon ON m.member_id = mon.member_id
-    LEFT JOIN rfm r ON m.member_id = r.member_id
-    """
-    
-    df = pd.read_sql(query, con=ojo_engine)
-    
-    if df.empty: 
-        print("[경고] 조회된 데이터가 없습니다.")
+
+logger = logging.getLogger(__name__)
+
+
+def calculate_segmented_cohort(ojo_engine, segment_type="all", batch_id=None):
+    logger.info(
+        "cohort_analysis_started",
+        extra={"batchId": batch_id, "segmentType": segment_type},
+    )
+
+    if batch_id:
+        query = text(
+            """
+            SELECT
+                m.member_id,
+                m.created_at AS join_date,
+                i.created_at AS order_date,
+                c.total_consult_count AS consult_count,
+                mon.total_revenue AS total_amount,
+                r.monetary AS rfm_monetary,
+                r.frequency AS rfm_frequency
+            FROM analytics_batch_target t
+            JOIN analytics_batch_run b
+              ON b.batch_id = t.batch_id
+            JOIN member m
+              ON m.member_id = t.member_id
+            JOIN invoice i
+              ON i.member_id = m.member_id
+             AND i.created_at < b.feature_base_at
+            LEFT JOIN feature_consultation_staging c
+              ON c.member_id = m.member_id AND c.batch_id = t.batch_id
+            LEFT JOIN feature_monetary_staging mon
+              ON mon.member_id = m.member_id AND mon.batch_id = t.batch_id
+            LEFT JOIN rfm_staging r
+              ON r.member_id = m.member_id AND r.batch_id = t.batch_id
+            WHERE t.batch_id = :batch_id
+            """
+        )
+        frame = pd.read_sql(query, con=ojo_engine, params={"batch_id": batch_id})
+    else:
+        query = text(
+            """
+            SELECT
+                m.member_id,
+                m.created_at AS join_date,
+                i.created_at AS order_date,
+                c.total_consult_count AS consult_count,
+                mon.total_revenue AS total_amount,
+                r.monetary AS rfm_monetary,
+                r.frequency AS rfm_frequency
+            FROM member m
+            JOIN invoice i ON i.member_id = m.member_id
+            LEFT JOIN feature_consultation c
+              ON c.member_id = m.member_id
+             AND c.feature_base_date = (
+                 SELECT MAX(c2.feature_base_date)
+                 FROM feature_consultation c2
+                 WHERE c2.member_id = m.member_id
+             )
+            LEFT JOIN feature_monetary mon
+              ON mon.member_id = m.member_id
+             AND mon.feature_base_date = (
+                 SELECT MAX(mon2.feature_base_date)
+                 FROM feature_monetary mon2
+                 WHERE mon2.member_id = m.member_id
+             )
+            LEFT JOIN rfm r ON r.member_id = m.member_id
+            """
+        )
+        frame = pd.read_sql(query, con=ojo_engine)
+
+    if frame.empty:
+        logger.info(
+            "cohort_analysis_empty",
+            extra={"batchId": batch_id, "segmentType": segment_type},
+        )
         return pd.DataFrame()
 
-    # 데이터 타입 변환 및 결측치 처리
-    df['join_date'] = pd.to_datetime(df['join_date'])
-    df['order_date'] = pd.to_datetime(df['order_date'])
-    df['consult_count'] = df['consult_count'].fillna(0)
-    df['total_amount'] = df['total_amount'].fillna(0)
+    frame["join_date"] = pd.to_datetime(frame["join_date"])
+    frame["order_date"] = pd.to_datetime(frame["order_date"])
+    frame["consult_count"] = frame["consult_count"].fillna(0)
+    frame["total_amount"] = frame["total_amount"].fillna(0)
 
-    # 2. 세그먼트 필터링 로직 
-    if segment_type == 'high_consult':
-        df = df[df['consult_count'] >= 5]
-    elif segment_type == 'vip':
-        df = df[df['rfm_monetary'] >= 1000000] 
-    elif segment_type == 'big_spender':
-        df = df[df['total_amount'] >= 1000000]
+    if segment_type == "high_consult":
+        frame = frame[frame["consult_count"] >= 5]
+    elif segment_type == "vip":
+        frame = frame[frame["rfm_monetary"] >= 1_000_000]
+    elif segment_type == "big_spender":
+        frame = frame[frame["total_amount"] >= 1_000_000]
 
-    if df.empty:
-        print(f"[정보] {segment_type} 조건에 맞는 데이터가 없습니다.")
+    if frame.empty:
+        logger.info(
+            "cohort_segment_empty",
+            extra={"batchId": batch_id, "segmentType": segment_type},
+        )
         return pd.DataFrame()
 
-    # 3. 코호트 인덱스 계산
-    df['join_month'] = df['join_date'].dt.to_period('M')
-    df['order_month'] = df['order_date'].dt.to_period('M')
-    df['cohort_index'] = (df['order_month'] - df['join_month']).apply(lambda x: x.n)
+    frame["join_month"] = frame["join_date"].dt.to_period("M")
+    frame["order_month"] = frame["order_date"].dt.to_period("M")
+    frame["cohort_index"] = (
+        frame["order_month"] - frame["join_month"]
+    ).apply(lambda difference: difference.n)
 
-    # 4. 피벗 테이블 및 유지율 계산
-    cohort_data = df.groupby(['join_month', 'cohort_index'])['member_id'].nunique().reset_index()
-    cohort_pivot = cohort_data.pivot(index='join_month', columns='cohort_index', values='member_id')
-    
-    # 첫 달 기준으로 비율 계산
-    cohort_size = cohort_pivot.iloc[:, 0]
-    retention = cohort_pivot.divide(cohort_size, axis=0)
-    
-    # DB 저장을 위해 가입월을 문자열로 변경
+    cohort_data = (
+        frame.groupby(["join_month", "cohort_index"])["member_id"]
+        .nunique()
+        .reset_index()
+    )
+    cohort_pivot = cohort_data.pivot(
+        index="join_month", columns="cohort_index", values="member_id"
+    )
+    if 0 not in cohort_pivot.columns:
+        logger.warning(
+            "cohort_initial_period_missing",
+            extra={"batchId": batch_id, "segmentType": segment_type},
+        )
+        return pd.DataFrame()
+
+    retention = cohort_pivot.divide(cohort_pivot[0], axis=0)
     retention.index = retention.index.astype(str)
-    result_df = retention.reset_index()
-    
-    result_df['segment_type'] = segment_type 
-    return result_df
+    result = retention.reset_index()
+    result["segment_type"] = segment_type
+
+    logger.info(
+        "cohort_analysis_completed",
+        extra={
+            "batchId": batch_id,
+            "segmentType": segment_type,
+            "targetCount": len(result),
+        },
+    )
+    return result

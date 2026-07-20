@@ -16,21 +16,10 @@ def build_base_dataset(
     df = consultation.copy()
 
     # feature_base_date는 consultation 것을 대표로 사용
-    df = df.merge(
-        monetary.drop(columns=["feature_base_date"], errors="ignore"),
-        on="member_id",
-        how="inner"
-    )
-    df = df.merge(
-        lifecycle.drop(columns=["feature_base_date"], errors="ignore"),
-        on="member_id",
-        how="inner"
-    )
-    df = df.merge(
-        usage.drop(columns=["feature_base_date"], errors="ignore"),
-        on="member_id",
-        how="inner"
-    )
+    join_keys = ["member_id", "feature_base_date"]
+    df = df.merge(monetary, on=join_keys, how="inner", validate="one_to_one")
+    df = df.merge(lifecycle, on=join_keys, how="inner", validate="one_to_one")
+    df = df.merge(usage, on=join_keys, how="inner", validate="one_to_one")
     df = df.merge(member, on="member_id", how="left")
 
     return df

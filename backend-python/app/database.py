@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from sqlalchemy import create_engine, QueuePool
+from sqlalchemy import create_engine, event, QueuePool
 
 load_dotenv()
 
@@ -23,7 +23,7 @@ def get_engine(db_name_env_key):
     
     url = f"mysql+pymysql://{user}:{password}@{host}:{port}/{db_name}?charset=utf8mb4"
     
-    return create_engine(
+    engine = create_engine(
         url,
         poolclass=QueuePool,
         pool_size=10,        # 분석 쿼리 동시 실행을 고려한 크기
@@ -31,6 +31,13 @@ def get_engine(db_name_env_key):
         pool_recycle=1800,   # RDS 연결 끊김(3600초) 방지를 위해 30분마다 재연결
         pool_pre_ping=True   # 커넥션 사용 전 유효성 체크 (가장 중요)
     )
+
+    @event.listens_for(engine, "connect")
+    def set_utc_session(dbapi_connection, _connection_record):
+        with dbapi_connection.cursor() as cursor:
+            cursor.execute("SET time_zone = '+00:00'")
+
+    return engine
 
 ojo_engine = get_engine('OJO_DATABASE')
 analysis_engine = get_engine('ANALYSIS_DATABASE')

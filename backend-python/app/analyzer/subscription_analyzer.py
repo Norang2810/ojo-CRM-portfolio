@@ -1,6 +1,7 @@
 import pandas as pd
+from sqlalchemy import text
 
-def calculate_subscription(ojo_engine):
+def calculate_subscription(ojo_engine, data_as_of=None):
     query = """
     SELECT
         sp.member_id, 
@@ -12,10 +13,13 @@ def calculate_subscription(ojo_engine):
         sp.reason_code
     FROM subscription_period sp
     JOIN product p ON sp.product_id = p.product_id
+    WHERE (:data_as_of IS NULL OR sp.started_at < :data_as_of)
     ORDER BY sp.member_id, sp.started_at ASC
     """
     
-    df = pd.read_sql(query, con=ojo_engine)
+    df = pd.read_sql(
+        text(query), con=ojo_engine, params={"data_as_of": data_as_of}
+    )
     
     if df.empty: return pd.DataFrame()
     

@@ -3,18 +3,28 @@ import numpy as np
 from sqlalchemy import text
 from datetime import datetime
 
-def calculate_rfm_metrics(ojo_engine):
+def calculate_rfm_metrics(ojo_engine, batch_id=None, data_as_of=None):
     # DB에서 rfm 테이블 가져오기
-    query = """SELECT r.member_id, r.recency, r.frequency, r.monetary, m.status FROM rfm r
-                JOIN member m ON r.member_id = m.member_id
-            """
-    df = pd.read_sql(text(query), con=ojo_engine)
+    if batch_id:
+        query = """
+            SELECT r.member_id, r.recency, r.frequency, r.monetary, m.status
+            FROM rfm_staging r
+            JOIN member m ON r.member_id = m.member_id
+            WHERE r.batch_id = :batch_id
+        """
+        df = pd.read_sql(text(query), con=ojo_engine, params={"batch_id": batch_id})
+    else:
+        query = """
+            SELECT r.member_id, r.recency, r.frequency, r.monetary, m.status
+            FROM rfm r JOIN member m ON r.member_id = m.member_id
+        """
+        df = pd.read_sql(text(query), con=ojo_engine)
 
     if df.empty:
         return pd.DataFrame(columns=['member_id', 'rfm_score', 'type', 'lifecycle_stage'])
 
     # 기준일 설정 (파이프라인이 도는 현재 시간)
-    now = datetime.now()
+    now = data_as_of or datetime.utcnow()
     df['recency'] = pd.to_datetime(df['recency'])
 
     # RFM 점수 계산 (1~5점 부여, 5점이 가장 좋음)

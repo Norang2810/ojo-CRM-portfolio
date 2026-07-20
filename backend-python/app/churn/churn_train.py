@@ -1,6 +1,9 @@
 import os
+import json
+import hashlib
 import joblib
 import pandas as pd
+from datetime import datetime, timezone
 
 from sklearn.model_selection import train_test_split
 from sklearn.pipeline import Pipeline
@@ -146,6 +149,24 @@ def main():
     print(f"Deployment model: {deployment_model_name}")
 
     joblib.dump(deployment_pipeline, f"{ARTIFACT_DIR}/best_model.pkl")
+    model_path = f"{ARTIFACT_DIR}/best_model.pkl"
+    with open(model_path, "rb") as model_file:
+        model_sha256 = hashlib.sha256(model_file.read()).hexdigest()
+    deployment_metrics = result_df[
+        result_df["model"] == deployment_model_name
+    ].iloc[0]
+    manifest = {
+        "modelName": deployment_model_name,
+        "sha256": model_sha256,
+        "createdAt": datetime.now(timezone.utc).isoformat(),
+        "trainingEntrypoint": "python -m app.churn.churn_train",
+        "metrics": {
+            key: float(deployment_metrics[key])
+            for key in ["accuracy", "precision", "recall", "f1", "roc_auc"]
+        },
+    }
+    with open(f"{ARTIFACT_DIR}/model_manifest.json", "w", encoding="utf-8") as manifest_file:
+        json.dump(manifest, manifest_file, ensure_ascii=False, indent=2)
     print(f"Best model saved -> {ARTIFACT_DIR}/best_model.pkl")
 
 

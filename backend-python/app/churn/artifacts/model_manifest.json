@@ -1,0 +1,13 @@
+{
+  "modelName": "HistGradientBoostingClassifier",
+  "sha256": "b34e3525635601a8d7f41f92d9dcfc71d51dabd07383cb28c255a809c5e84bb3",
+  "createdAt": "2026-03-26T09:01:02Z",
+  "trainingEntrypoint": "python -m app.churn.churn_train",
+  "metrics": {
+    "accuracy": 0.9977,
+    "precision": 0.8,
+    "recall": 0.1509,
+    "f1": 0.254,
+    "roc_auc": 0.8419
+  }
+}

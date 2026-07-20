@@ -27,6 +27,16 @@ const DashboardPage = () => {
       : <Icon src={decreaseIcon} alt="decrease" size="md" />;
   };
 
+  const formatDataAsOf = (value?: string) => {
+    if (!value) return '-';
+    const normalized = /(?:Z|[+-]\d{2}:\d{2})$/.test(value) ? value : `${value}Z`;
+    return new Intl.DateTimeFormat('ko-KR', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone: 'Asia/Seoul',
+    }).format(new Date(normalized));
+  };
+
   return (
     <DashboardLayout>
       <div className="my-3 ml-5 flex flex-col gap-2">
@@ -35,6 +45,19 @@ const DashboardPage = () => {
       </div>
 
       {/* 상단 메트릭 카드 */}
+      {summary && (
+        <div className="mb-3 ml-5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-white/60">
+          <span>운영 데이터 기준 {formatDataAsOf(summary.operationalDataAsOf)}</span>
+          <span>분석 데이터 기준 {formatDataAsOf(summary.analyticalDataAsOf)}</span>
+          <span className="font-mono">snapshot {summary.snapshotVersion}</span>
+          {summary.stale && (
+            <span className="rounded bg-amber-400/20 px-2 py-1 font-semibold text-amber-200">
+              최신 데이터 조회 실패 · 이전 정상 데이터 표시 중
+            </span>
+          )}
+        </div>
+      )}
+
       <div className="mb-8 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-4">
         <MetricCard
           label="현재 고객"

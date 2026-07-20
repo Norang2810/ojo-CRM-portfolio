@@ -1,27 +1,37 @@
+import logging
+
 import pandas as pd
-import numpy as np
+from sqlalchemy import text
 
-def calculate_ltv(ojo_engine):
-    print("[분석] LTV(고객 생애 가치) 계산 중...")
-    
-    # 필요한 데이터 로드 
+
+logger = logging.getLogger(__name__)
+
+
+def calculate_ltv(ojo_engine, data_as_of=None):
+    logger.info("ltv_analysis_started")
     query = """
-    SELECT m.member_id, i.billed_amount, i.created_at 
-    FROM member m
-    JOIN invoice i ON m.member_id = i.member_id
+        SELECT m.member_id, i.billed_amount, i.created_at
+        FROM member m
+        JOIN invoice i ON m.member_id = i.member_id
     """
-    df = pd.read_sql(query, con=ojo_engine)
-    
-    if df.empty: return pd.DataFrame()
+    params = None
+    if data_as_of is not None:
+        query += " WHERE i.created_at < :data_as_of"
+        params = {"data_as_of": data_as_of}
+    frame = pd.read_sql(text(query), con=ojo_engine, params=params)
+    if frame.empty:
+        return pd.DataFrame()
 
-    # LTV 계산 로직 (단순화: 평균 매출 * 구매 빈도 * 예상 유지 기간)
-    ltv_base = df.groupby('member_id').agg({
-        'billed_amount': ['mean', 'sum', 'count'],
-        'created_at': [lambda x: (x.max() - x.min()).days]
-    })
-    ltv_base.columns = ['avg_value', 'total_revenue', 'frequency', 'lifespan_days']
-    
-    # 예측 LTV 계산 (예: 현재까지의 평균 매출에 유지 계수 적용)
-    ltv_base['LTV'] = ltv_base['avg_value'] * ltv_base['frequency'] * 1.2 
-    
-    return ltv_base.reset_index()
+    ltv_base = frame.groupby("member_id").agg(
+        avg_value=("billed_amount", "mean"),
+        total_revenue=("billed_amount", "sum"),
+        frequency=("billed_amount", "count"),
+        first_order=("created_at", "min"),
+        last_order=("created_at", "max"),
+    )
+    ltv_base["lifespan_days"] = (
+        pd.to_datetime(ltv_base["last_order"])
+        - pd.to_datetime(ltv_base["first_order"])
+    ).dt.days
+    ltv_base["LTV"] = ltv_base["avg_value"] * ltv_base["frequency"] * 1.2
+    return ltv_base.drop(columns=["first_order", "last_order"]).reset_index()

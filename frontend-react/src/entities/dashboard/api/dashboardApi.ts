@@ -30,6 +30,10 @@ export interface DashboardSummaryData {
   };
   dailyStats: DashboardDailyStat[];
   segments: DashboardSegments;
+  snapshotVersion: string;
+  analyticalDataAsOf: string;
+  operationalDataAsOf: string;
+  stale: boolean;
 }
 
 export interface DashboardSummaryResponse {
